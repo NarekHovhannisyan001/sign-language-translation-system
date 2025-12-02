@@ -1,3 +1,4 @@
+
 import kong.unirest.HttpResponse;
 import kong.unirest.Unirest;
 import org.jsoup.Jsoup;
@@ -14,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 public class ScrapingVideos {
+
     public static void main(String[] args) {
         new ScrapingVideos().foo();
     }
@@ -41,7 +43,6 @@ public class ScrapingVideos {
                 .asString();
 
         Elements bigDiv = Jsoup.parse(response.getBody()).select("#mwBQ > section");
-
 
         for (int i = 6; i < bigDiv.size(); i++) {
             Elements ul = bigDiv.get(i).select("ul");
@@ -91,7 +92,6 @@ public class ScrapingVideos {
                 System.out.println("Video URL not found.");
             }
 
-
             Element fileSizeElement = doc.selectFirst("#P3575 .wbmi-entity-label");
             if (fileSizeElement != null) {
                 System.out.println("File Size: " + fileSizeElement.text());
@@ -126,76 +126,68 @@ public class ScrapingVideos {
      * @param videoUrl The URL of the video to download.
      */
     private void downloadVideo(String videoUrl, String videoName) {
-    try {
-    
-        Path videosDir = Path.of("videos");
-        if (!Files.exists(videosDir)) {
-            Files.createDirectories(videosDir);
-        }
-        
-        String extension = "";
-        if (videoUrl.contains(".")) {
-            String urlPath = videoUrl.split("\\?")[0];
-            extension = urlPath.substring(urlPath.lastIndexOf("."));
-            if (extension.length() > 5) {
+        try {
+            //(signlanguagetranslationsystem/videos/)
+            Path videosDir = Path.of("../videos");
+            if (!Files.exists(videosDir)) {
+                Files.createDirectories(videosDir);
+            }
+
+            String extension = "";
+            if (videoUrl.contains(".")) {
+                String urlPath = videoUrl.split("\\?")[0];
+                extension = urlPath.substring(urlPath.lastIndexOf("."));
+                if (extension.length() > 5) {
+                    extension = ".webm";
+                }
+            } else {
                 extension = ".webm";
             }
-        } else {
-            extension = ".webm";
-        }
-        
-        if (!videoName.contains(".")) {
-            videoName = videoName + extension;
-        }
-        
-        videoName = videoName.replaceAll("[/\\\\:*?\"<>|]", "_");
-        
-        URL url = new URL(videoUrl);
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setRequestProperty("User-Agent", "VideoDownloaderBot/1.0 (contact: levsyan22@gmail.com)");
 
-        int responseCode = connection.getResponseCode();
-        System.out.println("Response code for " + videoName + ": " + responseCode);
-        
-        if (responseCode == HttpURLConnection.HTTP_OK) {
-            String contentType = connection.getContentType();
-            System.out.println("Content-Type: " + contentType);
-            
-            OUTPUT_FILE++;
-            Path outputPath = videosDir.resolve(videoName);
-            
-            long totalBytes = 0;
-            try (InputStream inputStream = connection.getInputStream();
-                 FileOutputStream outputStream = new FileOutputStream(outputPath.toFile())) {
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-                while ((bytesRead = inputStream.read(buffer)) != -1) {
-                    outputStream.write(buffer, 0, bytesRead);
-                    totalBytes += bytesRead;
-                }
-                System.out.println("✓ Video downloaded: " + outputPath + " (" + formatBytes(totalBytes) + ")");
+            if (!videoName.contains(".")) {
+                videoName = videoName + extension;
             }
-        } else {
-            System.err.println("✗ Failed: " + videoName + " (HTTP " + responseCode + ")");
-            Files.writeString(Path.of("FailedUrl.txt"), 
-                videoName + " | " + videoUrl + " | HTTP " + responseCode + "\n", 
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        }
-    } catch (Exception e) {
-        System.err.println("Error downloading '" + videoName + "': " + e.getMessage());
-        try {
-            Files.writeString(Path.of("FailedUrl.txt"), 
-                videoName + " | " + videoUrl + " | Error: " + e.getMessage() + "\n", 
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (Exception ex) {
-            // Ignore
+
+            videoName = videoName.replaceAll("[/\\\\:*?\"<>|]", "_");
+
+            URL url = new URL(videoUrl);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestProperty("User-Agent", "VideoDownloaderBot/1.0 (contact: levsyan22@gmail.com)");
+
+            int responseCode = connection.getResponseCode();
+
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                OUTPUT_FILE++;
+                Path outputPath = videosDir.resolve(videoName);
+
+                long totalBytes = 0;
+                try (InputStream inputStream = connection.getInputStream(); FileOutputStream outputStream = new FileOutputStream(outputPath.toFile())) {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    while ((bytesRead = inputStream.read(buffer)) != -1) {
+                        outputStream.write(buffer, 0, bytesRead);
+                        totalBytes += bytesRead;
+                    }
+                    System.out.println("✓ Downloaded: " + videoName + " (" + formatBytes(totalBytes) + ")");
+                }
+            } else {
+                System.err.println("✗ Failed: " + videoName + " (HTTP " + responseCode + ")");
+                Files.writeString(Path.of("../FailedUrl.txt"),
+                        videoName + " | " + videoUrl + " | HTTP " + responseCode + "\n",
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            }
+        } catch (Exception e) {
+            System.err.println("Error: " + videoName + " - " + e.getMessage());
         }
     }
-}
 
-private String formatBytes(long bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return String.format("%.2f KB", bytes / 1024.0);
-    return String.format("%.2f MB", bytes / (1024.0 * 1024.0));
-}
+    private String formatBytes(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024 * 1024) {
+            return String.format("%.2f KB", bytes / 1024.0);
+        }
+        return String.format("%.2f MB", bytes / (1024.0 * 1024.0));
+    }
 }
