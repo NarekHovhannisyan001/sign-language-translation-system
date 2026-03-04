@@ -173,28 +173,28 @@ class VideoPanel(QFrame):
 
         # Controls bar
         ctrl = QFrame()
-        ctrl.setFixedHeight(72)
+        ctrl.setFixedHeight(90)
         ctrl.setStyleSheet("QFrame { background:#07071a; border-top:1px solid #0e0e28; border-radius:0 0 10px 10px; }")
         cl = QHBoxLayout(ctrl)
         cl.setContentsMargins(14, 0, 14, 0)
         cl.setSpacing(6)
 
         pbtn_small = """
-            QPushButton { background:transparent; color:#556688; border:none; font-size:20px; padding:0 5px; }
+            QPushButton { background:transparent; color:#556688; border:none; font-size:24px; padding:0 5px; }
             QPushButton:hover { color:#aabbee; }
             QPushButton:disabled { color:#1e1e3a; }
         """
         pbtn_large = """
             QPushButton { background:#0d0d28; color:#aabbee; border:1px solid #1e1e44;
-                border-radius:10px; font-size:26px; padding:0; }
+                border-radius:12px; font-size:32px; padding:0; }
             QPushButton:hover { background:#141440; color:#00c6ff; border-color:#0050cc; }
             QPushButton:pressed { background:#080820; }
             QPushButton:disabled { color:#1e1e3a; border-color:#111128; background:transparent; }
         """
-        self.btn_prev   = QPushButton("⏮"); self.btn_prev.setFixedSize(42, 42)
-        self.btn_play   = QPushButton("▶"); self.btn_play.setFixedSize(56, 56)
-        self.btn_next   = QPushButton("⏭"); self.btn_next.setFixedSize(42, 42)
-        self.btn_replay = QPushButton("↺"); self.btn_replay.setFixedSize(42, 42)
+        self.btn_prev   = QPushButton("⏮"); self.btn_prev.setFixedSize(52, 52)
+        self.btn_play   = QPushButton("▶"); self.btn_play.setFixedSize(70, 70)
+        self.btn_next   = QPushButton("⏭"); self.btn_next.setFixedSize(52, 52)
+        self.btn_replay = QPushButton("↺"); self.btn_replay.setFixedSize(52, 52)
         self.btn_prev.setStyleSheet(pbtn_small)
         self.btn_play.setStyleSheet(pbtn_large)
         self.btn_next.setStyleSheet(pbtn_small)
@@ -226,14 +226,15 @@ class VideoPanel(QFrame):
         self.status_text.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self.status_text.setStyleSheet("color:#1e1e3a; letter-spacing:2px;")
 
+        cl.addStretch()
         cl.addWidget(self.btn_prev)
         cl.addWidget(self.btn_play)
         cl.addWidget(self.btn_next)
         cl.addWidget(self.btn_replay)
-        cl.addSpacing(8)
+        cl.addStretch()
         cl.addWidget(self.loop_check)
         cl.addWidget(self.speed_combo)
-        cl.addStretch()
+        cl.addSpacing(8)
         cl.addWidget(self.status_dot)
         cl.addWidget(self.status_text)
         layout.addWidget(ctrl)
