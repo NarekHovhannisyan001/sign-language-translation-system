@@ -24,11 +24,12 @@ class VideoWorker(QThread):
     frame_ready = pyqtSignal(QImage)
     finished    = pyqtSignal()
 
-    def __init__(self, video_path, size=(600, 400), speed=1.0):
+    def __init__(self, video_path, size=(600, 400), speed=1.0, loop=False):
         super().__init__()
         self.video_path = video_path
         self.size       = size
         self.speed      = speed   # 0.5 / 1.0 / 1.5 / 2.0
+        self.loop       = loop    # if True, seeks back to frame 0 instead of stopping
         self._stop      = False
         self._paused    = False
 
@@ -46,13 +47,16 @@ class VideoWorker(QThread):
                 continue
             ret, frame = cap.read()
             if not ret:
+                if self.loop:
+                    # Seek back to beginning — no gap, no new thread
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 8)
+                    continue
                 break
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame = cv2.resize(frame, self.size)
             h, w, ch = frame.shape
             img = QImage(frame.data, w, h, ch * w, QImage.Format.Format_RGB888)
             self.frame_ready.emit(img.copy())
-            # Delay adjusted by speed — faster speed = shorter delay
             delay = max(1, int(1000 / (fps * self.speed)))
             self.msleep(delay)
         cap.release()

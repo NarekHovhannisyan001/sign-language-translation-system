@@ -116,15 +116,14 @@ class AppController:
         if not os.path.exists(IDLE_PATH):
             self.window.set_status("IDLE.MP4 NOT FOUND", "#ff4466")
             return
-        self._idle_worker = VideoWorker(IDLE_PATH)
+        # loop=True — worker seeks back to frame 0 seamlessly, no gap
+        self._idle_worker = VideoWorker(IDLE_PATH, loop=True)
         self._idle_worker.frame_ready.connect(self.window.show_frame)
-        self._idle_worker.finished.connect(self._start_idle)
         self._idle_worker.start()
         self.window.set_status("STANDBY", "#1e2e5a")
 
     def _stop_idle(self):
         if self._idle_worker:
-            self._idle_worker.finished.disconnect()
             self._idle_worker.stop()
             self._idle_worker = None
 
