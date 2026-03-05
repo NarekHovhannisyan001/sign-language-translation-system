@@ -239,29 +239,34 @@ def draw_frame_data(frame_data, canvas, width, height, IDX, FINGERS, CONTOURS):
             for p in pts_h
         ], np.int32)
 
-        # Palm
-        palm_ids = [0, 1, 5, 9, 13, 17]
+        c_palm  = tuple(np.clip(SKIN_MID,   0, 255).astype(int).tolist())
+        c_light = tuple(np.clip(SKIN_LIGHT, 0, 255).astype(int).tolist())
+
+        # ── Step 1: Palm base (wrist + thumb base + pinky base only)
+        # Use only wrist(0) + knuckle bases(5,9,13,17) — excludes thumb tip(1)
+        # so the hull stays tight and doesn't swallow finger roots
+        palm_ids = [0, 5, 9, 13, 17]
         hull = cv2.convexHull(hand[palm_ids])
-        c_palm = tuple(np.clip(SKIN_MID, 0, 255).astype(int).tolist())
         cv2.fillConvexPoly(canvas, hull, c_palm)
 
-        # Fingers with tapering thickness
+        # ── Step 2: Fingers as capsules ON TOP of palm ───────────
         for finger in FINGERS:
             segs = len(finger) - 1
             for i in range(segs):
                 t = (i + 1) / segs
-                seg_color = SKIN_DARK * (1 - t*0.3) + SKIN_LIGHT * (t*0.3)
-                c = tuple(np.clip(seg_color, 0, 255).astype(int).tolist())
-                thickness = max(2, 5 - i)
-                cv2.line(canvas,
-                         tuple(hand[finger[i]]),
-                         tuple(hand[finger[i+1]]),
-                         c, thickness, cv2.LINE_AA)
-            # Fingertip
-            tip = tuple(hand[finger[-1]])
-            cv2.circle(canvas, tip, 3,
-                       tuple(np.clip(SKIN_LIGHT, 0, 255).astype(int).tolist()),
-                       -1, cv2.LINE_AA)
+                # Taper: thick at base, thin at tip
+                radius = max(1, 4 - i)
+                seg_color = SKIN_DARK * (1 - t * 0.25) + SKIN_LIGHT * (t * 0.25)
+                draw_capsule(canvas,
+                             hand[finger[i]].astype(float),
+                             hand[finger[i + 1]].astype(float),
+                             seg_color, radius, shadow_offset=1)
+
+        # ── Step 3: Fingertip + knuckle highlight dots ────────────
+        for finger in FINGERS:
+            cv2.circle(canvas, tuple(hand[finger[-1]]), 2, c_light, -1, cv2.LINE_AA)
+        for kid in [5, 9, 13, 17]:
+            cv2.circle(canvas, tuple(hand[kid]), 2, c_light, -1, cv2.LINE_AA)
 
 
 # ─────────────────────────────────────────────
@@ -367,7 +372,28 @@ def generate_from_phrase(phrase, json_dir, output_video,
                 draw(inter, canvas)
                 out.write(canvas)
 
+        last_left  = None   # last known left hand keypoints
+        last_right = None   # last known right hand keypoints
+        last_face  = None   # last known face keypoints
+
         for fd in segment:
+            # ── Carry forward missing keypoints ───────────────────
+            if fd.get('left_hand'):
+                last_left  = fd['left_hand']
+            elif last_left:
+                fd = dict(fd, left_hand=last_left)
+
+            if fd.get('right_hand'):
+                last_right = fd['right_hand']
+            elif last_right:
+                fd = dict(fd, right_hand=last_right)
+
+            if fd.get('face'):
+                last_face  = fd['face']
+            elif last_face:
+                fd = dict(fd, face=last_face)
+            # ───────────────────────────────────────────────────────
+
             canvas = np.zeros((height, width, 3), np.uint8)
             draw(fd, canvas)
             out.write(canvas)
@@ -379,11 +405,15 @@ def generate_from_phrase(phrase, json_dir, output_video,
     print(f"✅ Generated '{output_video}' trim={trim} interp={interp_frames}")
 
 
+# ─────────────────────────────────────────────
+# Example
+# ─────────────────────────────────────────────
+
 if __name__ == '__main__':
-    generate_skeleton_video(
-        input_json=r"C:\Users\comp\Downloads\idle2.json",
-        output_video=r"C:\Users\comp\Videos\dp\sign-language-translation-system\ui\idle.mp4",
-        fps=30,
-        width=640,
-        height=480
+    generate_from_phrase(
+        "ես ապրել հայաստան շատ լավ ու հավեսով",
+        "/Users/narek/Desktop/Khosogh-Dzerqer/assets/signlang_kp",
+        "res18.mp4",
+        fps=30, width=640, height=480,
+        interp_frames=15, trim=15
     )
