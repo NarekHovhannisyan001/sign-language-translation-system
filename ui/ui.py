@@ -2,20 +2,13 @@ import sys
 import os
 import shutil
 import cv2
-import json
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFileDialog, QTextEdit, QFrame, QGraphicsDropShadowEffect, QSizePolicy,
-    QScrollArea, QComboBox, QCheckBox, QMenu
+    QFileDialog, QTextEdit, QFrame, QSizePolicy, QComboBox, QCheckBox, QMenu
 )
-from PyQt6.QtGui import QImage, QPixmap, QFont, QColor, QPainter, QPen, QAction
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QPoint
-
-qci = []
-current_video_path = None
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-JSON_DIR = os.path.join(os.path.dirname(BASE_DIR), "assets", "signlang_kp")
+from PyQt6.QtGui import QImage, QPixmap, QFont
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QPoint
 
 QUICK_PHRASES = [
     "Բարև", "Շնորհակալություն", "Ինչպե՞ս եք",
@@ -25,27 +18,28 @@ QUICK_PHRASES = [
 
 
 # ─────────────────────────────────────────────
-#  Worker Thread
+# Video Playback Worker
 # ─────────────────────────────────────────────
 class VideoWorker(QThread):
     frame_ready = pyqtSignal(QImage)
-    finished = pyqtSignal()
+    finished    = pyqtSignal()
 
-    def __init__(self, video_path, size=(600, 400)):
+    def __init__(self, video_path, size=(600, 400), speed=1.0):
         super().__init__()
         self.video_path = video_path
-        self.size = size
-        self._stop = False
-        self._paused = False
+        self.size       = size
+        self.speed      = speed   # 0.5 / 1.0 / 1.5 / 2.0
+        self._stop      = False
+        self._paused    = False
 
-    def stop(self):   self._stop = True
+    def stop(self):   self._stop   = True
     def pause(self):  self._paused = True
     def resume(self): self._paused = False
+    def set_speed(self, speed): self.speed = speed
 
     def run(self):
         cap = cv2.VideoCapture(self.video_path)
         fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        delay = max(1, int(1000 / fps))
         while cap.isOpened() and not self._stop:
             if self._paused:
                 self.msleep(50)
@@ -57,15 +51,16 @@ class VideoWorker(QThread):
             frame = cv2.resize(frame, self.size)
             h, w, ch = frame.shape
             img = QImage(frame.data, w, h, ch * w, QImage.Format.Format_RGB888)
-            img = img.copy()
-            self.frame_ready.emit(img)
+            self.frame_ready.emit(img.copy())
+            # Delay adjusted by speed — faster speed = shorter delay
+            delay = max(1, int(1000 / (fps * self.speed)))
             self.msleep(delay)
         cap.release()
         self.finished.emit()
 
 
 # ─────────────────────────────────────────────
-#  Reusable Widgets
+# Reusable Widgets
 # ─────────────────────────────────────────────
 class ToolBtn(QPushButton):
     def __init__(self, text, accent=False, parent=None):
@@ -95,33 +90,6 @@ class ToolBtn(QPushButton):
             """)
 
 
-class WordBadge(QLabel):
-    clicked = pyqtSignal(str)
-
-    def __init__(self, word, found=True, parent=None):
-        super().__init__(parent)
-        self.word = word
-        self.found = found
-        self.setText(f" {word} {'✓' if found else '✗'} ")
-        self.setFont(QFont("Courier New", 10))
-        self.setCursor(Qt.CursorShape.PointingHandCursor if found else Qt.CursorShape.ArrowCursor)
-        if found:
-            self.setStyleSheet("""
-                QLabel { color:#00e676; background:rgba(0,230,118,12);
-                    border:1px solid rgba(0,230,118,40); border-radius:6px; padding:3px 6px; }
-                QLabel:hover { background:rgba(0,230,118,22); }
-            """)
-        else:
-            self.setStyleSheet("""
-                QLabel { color:#ff5252; background:rgba(255,82,82,12);
-                    border:1px solid rgba(255,82,82,40); border-radius:6px; padding:3px 6px; }
-            """)
-
-    def mousePressEvent(self, e):
-        if self.found:
-            self.clicked.emit(self.word)
-
-
 class PhraseChip(QPushButton):
     def __init__(self, text, parent=None):
         super().__init__(text, parent)
@@ -137,7 +105,7 @@ class PhraseChip(QPushButton):
 
 
 # ─────────────────────────────────────────────
-#  Video Panel (right side)
+# Video Panel
 # ─────────────────────────────────────────────
 class VideoPanel(QFrame):
     def __init__(self, parent=None):
@@ -149,7 +117,6 @@ class VideoPanel(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Video area
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -161,44 +128,46 @@ class VideoPanel(QFrame):
         self.placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.placeholder.setStyleSheet("color:#111130; background:transparent; letter-spacing:3px;")
 
-        # Stack
-        self.stack = QWidget()
-        self.stack.setStyleSheet("background:transparent;")
-        sl = QVBoxLayout(self.stack)
+        stack = QWidget()
+        stack.setStyleSheet("background:transparent;")
+        sl = QVBoxLayout(stack)
         sl.setContentsMargins(0, 0, 0, 0)
         sl.addWidget(self.video_label)
         self.video_label.hide()
         sl.addWidget(self.placeholder)
-        layout.addWidget(self.stack)
+        layout.addWidget(stack)
 
         # Controls bar
         ctrl = QFrame()
-        ctrl.setFixedHeight(90)
+        ctrl.setFixedHeight(82)
         ctrl.setStyleSheet("QFrame { background:#07071a; border-top:1px solid #0e0e28; border-radius:0 0 10px 10px; }")
         cl = QHBoxLayout(ctrl)
         cl.setContentsMargins(14, 0, 14, 0)
         cl.setSpacing(6)
 
         pbtn_small = """
-            QPushButton { background:transparent; color:#556688; border:none; font-size:24px; padding:0 5px; }
+            QPushButton { background:transparent; color:#556688; border:none; font-size:22px; padding:0 5px; }
             QPushButton:hover { color:#aabbee; }
             QPushButton:disabled { color:#1e1e3a; }
         """
         pbtn_large = """
             QPushButton { background:#0d0d28; color:#aabbee; border:1px solid #1e1e44;
-                border-radius:12px; font-size:32px; padding:0; }
+                border-radius:12px; font-size:30px; padding:0; }
             QPushButton:hover { background:#141440; color:#00c6ff; border-color:#0050cc; }
             QPushButton:pressed { background:#080820; }
             QPushButton:disabled { color:#1e1e3a; border-color:#111128; background:transparent; }
         """
-        self.btn_prev   = QPushButton("⏮"); self.btn_prev.setFixedSize(52, 52)
-        self.btn_play   = QPushButton("▶"); self.btn_play.setFixedSize(70, 70)
-        self.btn_next   = QPushButton("⏭"); self.btn_next.setFixedSize(52, 52)
-        self.btn_replay = QPushButton("↺"); self.btn_replay.setFixedSize(52, 52)
+
+        self.btn_prev   = QPushButton("⏮"); self.btn_prev.setFixedSize(50, 50)
+        self.btn_play   = QPushButton("▶"); self.btn_play.setFixedSize(66, 66)
+        self.btn_next   = QPushButton("⏭"); self.btn_next.setFixedSize(50, 50)
+        self.btn_replay = QPushButton("↺"); self.btn_replay.setFixedSize(50, 50)
+
         self.btn_prev.setStyleSheet(pbtn_small)
         self.btn_play.setStyleSheet(pbtn_large)
         self.btn_next.setStyleSheet(pbtn_small)
         self.btn_replay.setStyleSheet(pbtn_small)
+
         for b in [self.btn_prev, self.btn_play, self.btn_next, self.btn_replay]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -258,20 +227,39 @@ class VideoPanel(QFrame):
         self.btn_play.setText("⏸" if playing else "▶")
 
 
+
 # ─────────────────────────────────────────────
-#  Main Window
+# Smart Text Input — Enter triggers translate
+# Shift+Enter adds a new line
 # ─────────────────────────────────────────────
-class VideoPlayer(QWidget):
+class ArmenianTextInput(QTextEdit):
+    enter_pressed = pyqtSignal()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                super().keyPressEvent(event)   # Shift+Enter = new line
+            else:
+                self.enter_pressed.emit()       # Enter = translate
+        else:
+            super().keyPressEvent(event)
+
+# ─────────────────────────────────────────────
+# Main Window — UI only, emits signals to main.py
+# ─────────────────────────────────────────────
+class MainWindow(QWidget):
+    # Signals emitted to main.py — no logic here
+    translate_requested = pyqtSignal(str)   # user pressed Translate
+    replay_requested    = pyqtSignal()      # user pressed Replay
+    prev_requested      = pyqtSignal()      # user pressed ⏮
+    next_requested      = pyqtSignal()      # user pressed ⏭
+    save_requested      = pyqtSignal()      # user pressed Save
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Sign Language Translation System")
         self.setMinimumSize(1100, 720)
-        self._idle_worker = None
-        self._main_worker = None
-        self._is_paused   = False
-        self._loop        = False
         self._setup_ui()
-        self._start_idle()
 
     def _setup_ui(self):
         self.setStyleSheet("QWidget { background:#06060f; color:#c8d8ff; }")
@@ -291,18 +279,18 @@ class VideoPlayer(QWidget):
         logo.setFont(QFont("Courier New", 16, QFont.Weight.Bold))
         logo.setStyleSheet("color:#00c6ff; letter-spacing:6px; margin-right:16px;")
 
-        self.btn_replay_tb = ToolBtn("↺  Replay")
+        self.btn_replay_tb = ToolBtn("↺ Replay")
         self.btn_replay_tb.setFixedWidth(100)
         self.btn_replay_tb.setEnabled(False)
-        self.btn_replay_tb.clicked.connect(self.handle_replay)
+        self.btn_replay_tb.clicked.connect(self.replay_requested)
 
-        self.btn_save = ToolBtn("⬇  Save")
+        self.btn_save = ToolBtn("⬇ Save")
         self.btn_save.setFixedWidth(90)
-        self.btn_save.clicked.connect(self.handle_download)
+        self.btn_save.clicked.connect(self.save_requested)
 
         self.btn_export = ToolBtn("Export ▾")
         self.btn_export.setFixedWidth(100)
-        self.btn_export.clicked.connect(self._show_export_menu)
+        self.btn_export.clicked.connect(self._export_menu)
 
         self.btn_settings = ToolBtn("⚙")
         self.btn_settings.setFixedWidth(40)
@@ -332,7 +320,7 @@ class VideoPlayer(QWidget):
         lh.setStyleSheet("color:#334466; letter-spacing:2px;")
         left.addWidget(lh)
 
-        self.text_input = QTextEdit()
+        self.text_input = ArmenianTextInput()
         self.text_input.setPlaceholderText("Գրեք հայերեն տեքստ…")
         self.text_input.setFont(QFont("Courier New", 14))
         self.text_input.setMinimumHeight(160)
@@ -345,7 +333,6 @@ class VideoPlayer(QWidget):
         """)
         left.addWidget(self.text_input)
 
-        # Centered Translate button below text input
         self.btn_translate = QPushButton("▶  TRANSLATE")
         self.btn_translate.setFixedSize(200, 44)
         self.btn_translate.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -353,39 +340,27 @@ class VideoPlayer(QWidget):
         self.btn_translate.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #00c6ff,stop:1 #0072ff);
-                color: white; border: none; border-radius: 10px;
-                letter-spacing: 2px;
+                color: white; border: none; border-radius: 10px; letter-spacing: 2px;
             }
             QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #33d6ff,stop:1 #2299ff); }
-            QPushButton:pressed { opacity: 0.8; }
             QPushButton:disabled { background: #1a1a2e; color: #333355; }
         """)
-        self.btn_translate.clicked.connect(self.handle_submit)
-        translate_row = QHBoxLayout()
-        translate_row.addStretch()
-        translate_row.addWidget(self.btn_translate)
-        translate_row.addStretch()
-        left.addLayout(translate_row)
+        self.btn_translate.clicked.connect(self._on_translate_clicked)
+        self.text_input.enter_pressed.connect(self._on_translate_clicked)
+        tr = QHBoxLayout()
+        tr.addStretch(); tr.addWidget(self.btn_translate); tr.addStretch()
+        left.addLayout(tr)
 
-        tok_hdr = QLabel("Word recognition")
+        tok_hdr = QLabel("Parsed tokens")
         tok_hdr.setFont(QFont("Courier New", 9))
         tok_hdr.setStyleSheet("color:#222244; letter-spacing:2px;")
         left.addWidget(tok_hdr)
 
-        tok_scroll = QScrollArea()
-        tok_scroll.setFixedHeight(48)
-        tok_scroll.setWidgetResizable(True)
-        tok_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        tok_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        tok_scroll.setStyleSheet("QScrollArea { border:none; background:transparent; }")
-        self.token_widget = QWidget()
-        self.token_widget.setStyleSheet("background:transparent;")
-        self.token_layout = QHBoxLayout(self.token_widget)
-        self.token_layout.setContentsMargins(0, 4, 0, 4)
-        self.token_layout.setSpacing(6)
-        self.token_layout.addStretch()
-        tok_scroll.setWidget(self.token_widget)
-        left.addWidget(tok_scroll)
+        self.parsed_label = QLabel("")
+        self.parsed_label.setFont(QFont("Courier New", 10))
+        self.parsed_label.setStyleSheet("color:#4455aa; letter-spacing:1px;")
+        self.parsed_label.setWordWrap(True)
+        left.addWidget(self.parsed_label)
 
         self.info_label = QLabel("")
         self.info_label.setFont(QFont("Courier New", 9))
@@ -407,16 +382,14 @@ class VideoPlayer(QWidget):
         right.addWidget(rh)
 
         self.video_panel = VideoPanel()
-        self.video_panel.btn_play.clicked.connect(self._toggle_pause)
-        self.video_panel.btn_replay.clicked.connect(self.handle_replay)
-        self.video_panel.loop_check.stateChanged.connect(
-            lambda s: setattr(self, '_loop', s == Qt.CheckState.Checked.value)
-        )
+        self.video_panel.btn_play.clicked.connect(self._on_play_clicked)
+        self.video_panel.btn_replay.clicked.connect(self.replay_requested)
+        self.video_panel.btn_prev.clicked.connect(self.prev_requested)
+        self.video_panel.btn_next.clicked.connect(self.next_requested)
         right.addWidget(self.video_panel)
 
         panels.addWidget(left_widget)
         panels.addWidget(right_widget)
-
         panels_widget = QWidget()
         panels_widget.setLayout(panels)
         root.addWidget(panels_widget)
@@ -428,12 +401,10 @@ class VideoPlayer(QWidget):
         cl = QHBoxLayout(chips_frame)
         cl.setContentsMargins(20, 0, 20, 0)
         cl.setSpacing(8)
-
         ql = QLabel("Quick:")
         ql.setFont(QFont("Courier New", 9))
         ql.setStyleSheet("color:#222244; letter-spacing:1px;")
         cl.addWidget(ql)
-
         for phrase in QUICK_PHRASES:
             chip = PhraseChip(phrase)
             chip.clicked.connect(lambda _, p=phrase: self._insert_phrase(p))
@@ -441,12 +412,23 @@ class VideoPlayer(QWidget):
         cl.addStretch()
         root.addWidget(chips_frame)
 
-    # ── Helpers ──────────────────────────────
+    # ── UI-only helpers ───────────────────────
+    def _on_translate_clicked(self):
+        text = self.text_input.toPlainText().strip()
+        if text:
+            self.translate_requested.emit(text)
+
+    def _on_play_clicked(self):
+        # Emit toggle signal — main.py handles pause/resume state
+        self.video_panel.btn_play.setText(
+            "▶" if self.video_panel.btn_play.text() == "⏸" else "⏸"
+        )
+
     def _insert_phrase(self, phrase):
         cur = self.text_input.toPlainText().strip()
         self.text_input.setPlainText((cur + " " + phrase).strip())
 
-    def _show_export_menu(self):
+    def _export_menu(self):
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu { background:#0d0d22; color:#8899cc; border:1px solid #1e1e40;
@@ -459,116 +441,28 @@ class VideoPlayer(QWidget):
         menu.addAction("Export as WebM")
         menu.exec(self.btn_export.mapToGlobal(QPoint(0, self.btn_export.height())))
 
-    def _toggle_pause(self):
-        if self._main_worker and self._main_worker.isRunning():
-            if self._is_paused:
-                self._main_worker.resume()
-                self._is_paused = False
-                self.video_panel.set_status("PLAYING", "#00ffaa", playing=True)
-            else:
-                self._main_worker.pause()
-                self._is_paused = True
-                self.video_panel.set_status("PAUSED", "#ffaa00", playing=False)
+    # ── Public methods called by main.py ──────
+    def set_status(self, text, color="#1e1e3a", playing=False):
+        self.video_panel.set_status(text, color, playing)
 
-    def _update_tokens(self, text):
-        for i in reversed(range(self.token_layout.count())):
-            w = self.token_layout.itemAt(i).widget()
-            if w: w.deleteLater()
+    def set_parsed(self, text):
+        self.parsed_label.setText(text)
 
-        missing = []
-        for word in text.strip().split():
-            found = os.path.isfile(os.path.join(JSON_DIR, f"{word}.json"))
-            badge = WordBadge(word, found)
-            self.token_layout.insertWidget(self.token_layout.count() - 1, badge)
-            if not found:
-                missing.append(word)
+    def set_error(self, text):
+        self.info_label.setText(f"⚠ {text}" if text else "")
 
-        self.info_label.setText(
-            f"⚠ Missing keypoints: {', '.join(missing)}" if missing else ""
-        )
+    def set_translate_enabled(self, enabled):
+        self.btn_translate.setEnabled(enabled)
 
-    # ── Playback ─────────────────────────────
-    def _start_idle(self):
-        idle = os.path.join(BASE_DIR, "idle.mp4")
-        if not os.path.exists(idle):
-            self.video_panel.set_status("IDLE.MP4 NOT FOUND", "#ff4466")
-            return
-        self._idle_worker = VideoWorker(idle)
-        self._idle_worker.frame_ready.connect(self.video_panel.show_frame)
-        self._idle_worker.finished.connect(self._start_idle)
-        self._idle_worker.start()
-        self.video_panel.set_status("STANDBY", "#1e2e5a")
+    def set_replay_enabled(self, enabled):
+        self.btn_replay_tb.setEnabled(enabled)
 
-    def _stop_idle(self):
-        if self._idle_worker:
-            self._idle_worker.finished.disconnect()
-            self._idle_worker.stop()
-            self._idle_worker = None
+    def set_nav_enabled(self, prev, nxt):
+        self.video_panel.btn_prev.setEnabled(prev)
+        self.video_panel.btn_next.setEnabled(nxt)
 
-    def handle_submit(self):
-        prompt = self.text_input.toPlainText().strip()
-        if not prompt:
-            return
+    def clear_input(self):
+        self.text_input.clear()
 
-        global current_video_path, qci
-        qci = prompt.split()
-        self._update_tokens(prompt)
-
-        video_path = os.path.join(BASE_DIR, "idle.mp4")
-        if not os.path.exists(video_path):
-            self.video_panel.set_status("VIDEO NOT FOUND", "#ff4466")
-            return
-
-        current_video_path = video_path
-        self._stop_idle()
-        self._is_paused = False
-        self.btn_translate.setEnabled(False)
-        self.btn_replay_tb.setEnabled(False)
-        self.video_panel.set_status("TRANSLATING", "#00ffaa", playing=True)
-
-        self._main_worker = VideoWorker(video_path)
-        self._main_worker.frame_ready.connect(self.video_panel.show_frame)
-        self._main_worker.finished.connect(self._on_main_finished)
-        self._main_worker.start()
-
-    def _on_main_finished(self):
-        self.btn_translate.setEnabled(True)
-        self.btn_replay_tb.setEnabled(True)
-        self.video_panel.set_status("DONE  ✓", "#00e676")
-        if self._loop and current_video_path:
-            self.handle_replay()
-        else:
-            self._start_idle()
-
-    def handle_replay(self):
-        if not current_video_path or not os.path.exists(current_video_path):
-            self.video_panel.set_status("NOTHING TO REPLAY", "#ff4466")
-            return
-        self._stop_idle()
-        self._is_paused = False
-        self.btn_replay_tb.setEnabled(False)
-        self.video_panel.set_status("REPLAYING", "#00c6ff", playing=True)
-        self._main_worker = VideoWorker(current_video_path)
-        self._main_worker.frame_ready.connect(self.video_panel.show_frame)
-        self._main_worker.finished.connect(self._on_main_finished)
-        self._main_worker.start()
-
-    def handle_download(self):
-        if not current_video_path or not os.path.exists(current_video_path):
-            self.video_panel.set_status("NO VIDEO LOADED", "#ff4466")
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Save", "translation.mp4", "Video (*.mp4)")
-        if path:
-            try:
-                shutil.copy(current_video_path, path)
-                self.video_panel.set_status("SAVED  ✓", "#00e676")
-            except Exception:
-                self.video_panel.set_status("SAVE FAILED", "#ff4466")
-
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    player = VideoPlayer()
-    player.show()
-    sys.exit(app.exec())
+    def show_frame(self, img):
+        self.video_panel.show_frame(img)
