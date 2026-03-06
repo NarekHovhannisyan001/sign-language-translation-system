@@ -11,7 +11,10 @@ AUX_VERBS = frozenset({
 })
 
 _CLEAN_RE = re.compile(r'http\S+|@\w+|#\w+|RT')
-_ARM_ONLY = re.compile(r'[^\u0531-\u058F\s]')
+# U+0531-U+0556 = Armenian uppercase letters (Ա–Ֆ)
+# U+0561-U+0587 = Armenian lowercase letters (ա–և)
+# Excludes punctuation: ՞ ՜ ։ ՛ ՝ ՚ ՟ etc. (U+0559-U+055F, U+0589)
+_ARM_ONLY = re.compile(r'[^\u0531-\u0556\u0561-\u0587\s]')
 _SPACES   = re.compile(r'\s+')
 
 _pipeline = None
@@ -33,14 +36,7 @@ def _get_pipeline():
 
 
 def parse(text: str) -> str:
-    """
-    Input:  raw Armenian text
-    Output: clean space-joined lemmatized string ready for generate_from_phrase()
-    
-    Example:
-        parse("ես շոկոլադ շատ եմ սիրում")
-        → "ես շոկոլադ շատ սիրել"
-    """
+   
     text = _CLEAN_RE.sub('', text)
     text = _ARM_ONLY.sub('', text)
     text = _SPACES.sub(' ', text).strip()
@@ -63,11 +59,13 @@ def parse(text: str) -> str:
 
 
 if __name__ == '__main__':
+    # Warm up the model before tests
+    parse("թեստ")
+    print()
     tests = [
-        "ես շոկոլադ շատ եմ սիրում",
-        "դու գնում ես տուն",
+        "ես շոկոլադ շա՞տ եմ սիր՝ում",
+        "դու գնում ե՞ս տուն",
         "մենք սիրում ենք Հայաստան",
-        "Այս դեպքում երկրորդական նախադասությունը գլխավոր նախադասության ստորոգելին է կամ որևէ լրացումը․ Եթե լռեիր, փիլիսոփա կլինեիր։, Նստել էին, ով ինչպես ուզում էր"
     ]
     for text in tests:
         print(f"Input  : {text}")
