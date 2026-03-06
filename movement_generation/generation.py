@@ -341,7 +341,17 @@ def generate_from_phrase(phrase, json_dir, output_video,
         if os.path.isfile(wp):
             paths.append(wp)
         else:
-            for ch in token:
+            # Split into letters but treat "ու" digraph as one unit
+            letters = []
+            i = 0
+            while i < len(token):
+                if token[i] == 'ո' and i + 1 < len(token) and token[i + 1] == 'ւ':
+                    letters.append('ու')
+                    i += 2
+                else:
+                    letters.append(token[i])
+                    i += 1
+            for ch in letters:
                 lp = os.path.join(json_dir, f"{ch}.json")
                 if os.path.isfile(lp):
                     paths.append(lp)
@@ -411,9 +421,9 @@ def generate_from_phrase(phrase, json_dir, output_video,
 
 if __name__ == '__main__':
     generate_from_phrase(
-        "ես ապրել հայաստան շատ լավ ու հավեսով",
-        "/Users/narek/Desktop/Khosogh-Dzerqer/assets/signlang_kp",
-        "res18.mp4",
+        "ու",
+        r"C:\Users\comp\Videos\dp\sign-language-translation-system\data",
+        "ու.mp4",
         fps=30, width=640, height=480,
         interp_frames=15, trim=15
     )
