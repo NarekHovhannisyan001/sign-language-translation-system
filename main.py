@@ -189,6 +189,8 @@ class AppController:
         self._play_worker.finished.connect(self._on_playback_finished)
         self._play_worker.start()
         self.window.set_status("PLAYING", "#00ffaa", playing=True)
+        self.window.set_input_enabled(False)
+        self.window.set_nav_enabled(False, False)
 
     def _stop_playback(self):
         if self._play_worker:
@@ -198,6 +200,8 @@ class AppController:
 
     def _on_playback_finished(self):
         self.window.set_status("DONE  ✓", "#00e676")
+        self.window.set_input_enabled(True)
+        self._update_nav()
         if self._loop and self._history_idx >= 0:
             self._play_video(self._history[self._history_idx])
         else:

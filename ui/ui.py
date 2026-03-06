@@ -49,7 +49,7 @@ class VideoWorker(QThread):
             if not ret:
                 if self.loop:
                     # Seek back to beginning — no gap, no new thread
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 8)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 10)
                     continue
                 break
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -283,12 +283,12 @@ class MainWindow(QWidget):
         logo.setFont(QFont("Courier New", 16, QFont.Weight.Bold))
         logo.setStyleSheet("color:#00c6ff; letter-spacing:6px; margin-right:16px;")
 
-        self.btn_replay_tb = ToolBtn("↺ Replay")
+        self.btn_replay_tb = ToolBtn("↺  Replay")
         self.btn_replay_tb.setFixedWidth(100)
         self.btn_replay_tb.setEnabled(False)
         self.btn_replay_tb.clicked.connect(self.replay_requested)
 
-        self.btn_save = ToolBtn("⬇ Save")
+        self.btn_save = ToolBtn("⬇  Save")
         self.btn_save.setFixedWidth(90)
         self.btn_save.clicked.connect(self.save_requested)
 
@@ -467,6 +467,17 @@ class MainWindow(QWidget):
 
     def clear_input(self):
         self.text_input.clear()
+
+    def set_input_enabled(self, enabled):
+        self.text_input.setEnabled(enabled)
+        # Dim the text box visually when disabled
+        self.text_input.setStyleSheet("""
+            QTextEdit { background:%s; color:%s;
+                border:1px solid #1a1a3a; border-radius:10px; padding:14px;
+                selection-background-color:#1a3a8a; }
+            QTextEdit:focus { border:1px solid #0050cc; }
+        """ % (('#06060f' if not enabled else '#09091e'),
+               ('#333355' if not enabled else '#c8d8ff')))
 
     def show_frame(self, img):
         self.video_panel.show_frame(img)
