@@ -335,28 +335,33 @@ def generate_skeleton_video(input_json, output_video="out.mp4",
 def generate_from_phrase(phrase, json_dir, output_video,
                           fps=30, width=640, height=480,
                           interp_frames=12, trim=20):
+    # phrase can be a list (from parse()) or a plain string
+    tokens = phrase if isinstance(phrase, list) else phrase.split()
+
     paths = []
-    for token in phrase.split():
+    for token in tokens:
         wp = os.path.join(json_dir, f"{token}.json")
         if os.path.isfile(wp):
+            # Works for both single words and multi-word tokens like "բարև ձեզ"
             paths.append(wp)
         else:
-            # Split into letters but treat "ու" digraph as one unit
+            # Fall back to letter-by-letter, treat "ու" as one unit
             letters = []
-            i = 0
-            while i < len(token):
-                if token[i] == 'ո' and i + 1 < len(token) and token[i + 1] == 'ւ':
+            j = 0
+            while j < len(token):
+                if token[j] == 'ո' and j + 1 < len(token) and token[j + 1] == 'ւ':
                     letters.append('ու')
-                    i += 2
+                    j += 2
                 else:
-                    letters.append(token[i])
-                    i += 1
+                    letters.append(token[j])
+                    j += 1
             for ch in letters:
                 lp = os.path.join(json_dir, f"{ch}.json")
                 if os.path.isfile(lp):
                     paths.append(lp)
                 else:
                     print(f"⚠️ Missing JSON for '{ch}'")
+
 
     IDX, FINGERS, CONTOURS = _build_constants()
     out = cv2.VideoWriter(output_video, cv2.VideoWriter_fourcc(*'MJPG'),
@@ -421,9 +426,9 @@ def generate_from_phrase(phrase, json_dir, output_video,
 
 if __name__ == '__main__':
     generate_from_phrase(
-        "ու",
-        r"C:\Users\comp\Videos\dp\sign-language-translation-system\data",
-        "ու.mp4",
+        "ես ապրել հայաստան շատ լավ ու հավեսով",
+        "/Users/narek/Desktop/Khosogh-Dzerqer/assets/signlang_kp",
+        "res18.mp4",
         fps=30, width=640, height=480,
         interp_frames=15, trim=15
     )
