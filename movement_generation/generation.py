@@ -387,9 +387,16 @@ def generate_from_phrase(phrase, json_dir, output_video,
                 draw(inter, canvas)
                 out.write(canvas)
 
-        last_left  = None   # last known left hand keypoints
-        last_right = None   # last known right hand keypoints
-        last_face  = None   # last known face keypoints
+        # Initialize carry-forward by scanning frames BEFORE the trim point.
+        # Needed when trim skips into a region where detection already failed
+        # e.g. ես: right hand missing frames 18-44, trim starts at 20 → nothing to carry.
+        last_left  = None
+        last_right = None
+        last_face  = None
+        for pre in frames[:start]:
+            if pre.get('left_hand'):  last_left  = pre['left_hand']
+            if pre.get('right_hand'): last_right = pre['right_hand']
+            if pre.get('face'):       last_face  = pre['face']
 
         for fd in segment:
             # ── Carry forward missing keypoints ───────────────────

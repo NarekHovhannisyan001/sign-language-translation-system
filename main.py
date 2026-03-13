@@ -16,6 +16,18 @@ OUTPUT_DIR = os.path.join(ROOT, "output")
 IDLE_PATH  = os.path.join(ROOT, "ui", "idle.mp4")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# Build known_words from data/ folder — single and multi-word entries
+def _load_known_words():
+    if not os.path.isdir(JSON_DIR):
+        return set()
+    return set(
+        f[:-5].lower()   # strip .json, lowercase — works for "բարև ձեզ.json" too
+        for f in os.listdir(JSON_DIR)
+        if f.endswith('.json')
+    )
+
+KNOWN_WORDS = _load_known_words()
+
 
 # ─────────────────────────────────────────────
 # Load modules from underscore folders
@@ -54,14 +66,13 @@ class GenerationWorker(QThread):
     def run(self):
         try:
             self.status_update.emit("PARSING")
-            phrase = parse(self.text)
-            if not phrase:
+            tokens = parse(self.text, known_words=KNOWN_WORDS)
+            self.status_update.emit("GENERATING")
+            if not tokens:
                 self.error.emit("Nothing to translate after parsing.")
                 return
-
-            self.status_update.emit("GENERATING")
             generate_from_phrase(
-                phrase        = phrase,
+                phrase        = tokens,
                 json_dir      = JSON_DIR,
                 output_video  = self.output_path,
                 fps           = 30,

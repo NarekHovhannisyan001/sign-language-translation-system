@@ -11,7 +11,7 @@ from PyQt6.QtGui import QImage, QPixmap, QFont
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QPoint
 
 QUICK_PHRASES = [
-    "Բարև", "Շնորհակալություն", "Ինչպե՞ս եք",
+    "Բարև Ձեզ","Ինչպե՞ս եք","Շնորհակալություն",
     "Ես ուզում եմ", "Օգնեք ինձ", "Հասկացա",
     "Ոչ", "Այո", "Ճիշտ է", "Ցտեսություն"
 ]
@@ -283,12 +283,12 @@ class MainWindow(QWidget):
         logo.setFont(QFont("Courier New", 16, QFont.Weight.Bold))
         logo.setStyleSheet("color:#00c6ff; letter-spacing:6px; margin-right:16px;")
 
-        self.btn_replay_tb = ToolBtn("↺  Replay")
+        self.btn_replay_tb = ToolBtn("↺ Replay")
         self.btn_replay_tb.setFixedWidth(100)
         self.btn_replay_tb.setEnabled(False)
         self.btn_replay_tb.clicked.connect(self.replay_requested)
 
-        self.btn_save = ToolBtn("⬇  Save")
+        self.btn_save = ToolBtn("⬇ Save")
         self.btn_save.setFixedWidth(90)
         self.btn_save.clicked.connect(self.save_requested)
 
