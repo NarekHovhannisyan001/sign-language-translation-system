@@ -434,7 +434,7 @@ def generate_from_phrase(phrase, json_dir, output_video,
 if __name__ == '__main__':
     generate_from_phrase(
         "ես ապրել հայաստան շատ լավ ու հավեսով",
-        "/Users/narek/Desktop/Khosogh-Dzerqer/assets/signlang_kp",
+        "..\data",
         "res18.mp4",
         fps=30, width=640, height=480,
         interp_frames=15, trim=15
