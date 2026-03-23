@@ -258,6 +258,7 @@ class MainWindow(QWidget):
     prev_requested      = pyqtSignal()      # user pressed ⏮
     next_requested      = pyqtSignal()      # user pressed ⏭
     save_requested      = pyqtSignal()      # user pressed Save
+    voice_requested     = pyqtSignal()      # user pressed Mic
 
     def __init__(self):
         super().__init__()
@@ -351,8 +352,29 @@ class MainWindow(QWidget):
         """)
         self.btn_translate.clicked.connect(self._on_translate_clicked)
         self.text_input.enter_pressed.connect(self._on_translate_clicked)
+
+        # Mic button
+        self.btn_mic = QPushButton("🎤")
+        self.btn_mic.setFixedSize(44, 44)
+        self.btn_mic.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_mic.setToolTip("Record voice (10 sec)")
+        self.btn_mic.setFont(QFont("Segoe UI Emoji", 16))
+        self.btn_mic.setStyleSheet("""
+            QPushButton {
+                background: #0d1b2a; color: #00c6ff;
+                border: 1px solid #1e3a5a; border-radius: 10px;
+            }
+            QPushButton:hover { background: #142840; border-color: #0072ff; }
+            QPushButton:disabled { color: #1e2e3a; border-color: #0d1b2a; }
+        """)
+        self.btn_mic.clicked.connect(self.voice_requested)
+
         tr = QHBoxLayout()
-        tr.addStretch(); tr.addWidget(self.btn_translate); tr.addStretch()
+        tr.setSpacing(8)
+        tr.addStretch()
+        tr.addWidget(self.btn_mic)
+        tr.addWidget(self.btn_translate)
+        tr.addStretch()
         left.addLayout(tr)
 
         tok_hdr = QLabel("Parsed tokens")
@@ -478,6 +500,35 @@ class MainWindow(QWidget):
             QTextEdit:focus { border:1px solid #0050cc; }
         """ % (('#06060f' if not enabled else '#09091e'),
                ('#333355' if not enabled else '#c8d8ff')))
+
+    def set_voice_enabled(self, enabled: bool):
+        self.btn_mic.setEnabled(enabled)
+
+    def set_mic_recording(self, recording: bool):
+        """Visual feedback while recording."""
+        if recording:
+            self.btn_mic.setText("⏹")
+            self.btn_mic.setStyleSheet("""
+                QPushButton {
+                    background: #3a0000; color: #ff4444;
+                    border: 1px solid #ff4444; border-radius: 10px;
+                }
+                QPushButton:hover { background: #4a0000; }
+            """)
+        else:
+            self.btn_mic.setText("🎤")
+            self.btn_mic.setStyleSheet("""
+                QPushButton {
+                    background: #0d1b2a; color: #00c6ff;
+                    border: 1px solid #1e3a5a; border-radius: 10px;
+                }
+                QPushButton:hover { background: #142840; border-color: #0072ff; }
+                QPushButton:disabled { color: #1e2e3a; border-color: #0d1b2a; }
+            """)
+
+    def insert_text(self, text: str):
+        """Insert transcribed text into input box."""
+        self.text_input.setPlainText(text.strip())
 
     def show_frame(self, img):
         self.video_panel.show_frame(img)

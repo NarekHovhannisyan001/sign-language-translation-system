@@ -42,6 +42,14 @@ def _load(folder, filename, module_name):
 _tok = _load("text_tokenizer",      "tokenizing.py", "tokenizing")
 _gen = _load("movement_generation", "generation.py", "generation")
 
+# Load voice module from project root
+import importlib.util as _ilu
+_vspec = _ilu.spec_from_file_location("voice_to_text", os.path.join(ROOT, "voice_to_text", "voice_to_text.py"))
+_vmod  = _ilu.module_from_spec(_vspec)
+_vspec.loader.exec_module(_vmod)
+record_audio    = _vmod.record_audio
+transcribe_audio = _vmod.transcribe_audio
+
 parse                = _tok.parse
 generate_from_phrase = _gen.generate_from_phrase
 
@@ -87,6 +95,74 @@ class GenerationWorker(QThread):
             self.error.emit(str(e))
 
 
+
+# ─────────────────────────────────────────────
+# Voice Worker — records + transcribes in background
+# ─────────────────────────────────────────────
+class VoiceWorker(QThread):
+    recording_started = pyqtSignal()        # mic is now recording
+    done              = pyqtSignal(str)     # transcription result
+    error             = pyqtSignal(str)     # error message
+
+    def __init__(self, max_seconds: int = 120):
+        super().__init__()
+        self.max_seconds = max_seconds   # safety cap — never records more than this
+        self._stop_flag  = False
+
+    def stop_recording(self):
+        """Called when user clicks mic button again to stop."""
+        self._stop_flag = True
+
+    def run(self):
+        import tempfile, os, wave, pyaudio
+        tmp_path = None
+        try:
+            self.recording_started.emit()
+
+            CHUNK    = 1024
+            FORMAT   = pyaudio.paInt16
+            CHANNELS = 1
+            RATE     = 16000
+
+            p      = pyaudio.PyAudio()
+            stream = p.open(format=FORMAT, channels=CHANNELS,
+                            rate=RATE, input=True, frames_per_buffer=CHUNK)
+
+            frames       = []
+            max_chunks   = int(RATE / CHUNK * self.max_seconds)
+            chunks_read  = 0
+
+            while chunks_read < max_chunks and not self._stop_flag:
+                frames.append(stream.read(CHUNK, exception_on_overflow=False))
+                chunks_read += 1
+
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+
+            if not frames:
+                self.error.emit("No audio recorded")
+                return
+
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            with wave.open(tmp_path, 'wb') as wf:
+                wf.setnchannels(CHANNELS)
+                wf.setsampwidth(pyaudio.PyAudio().get_sample_size(FORMAT))
+                wf.setframerate(RATE)
+                wf.writeframes(b''.join(frames))
+
+            text = transcribe_audio(tmp_path)
+            self.done.emit(text)
+
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+
 # ─────────────────────────────────────────────
 # App Controller — all logic lives here
 # ─────────────────────────────────────────────
@@ -94,9 +170,10 @@ class AppController:
     def __init__(self, window: MainWindow):
         self.window = window
 
-        self._idle_worker = None
-        self._play_worker = None
-        self._gen_worker  = None
+        self._idle_worker  = None
+        self._play_worker  = None
+        self._gen_worker   = None
+        self._voice_worker = None
 
         self._is_paused   = False
         self._loop        = False
@@ -109,6 +186,7 @@ class AppController:
         window.prev_requested.connect(self._play_prev)
         window.next_requested.connect(self._play_next)
         window.save_requested.connect(self._save)
+        window.voice_requested.connect(self._on_voice)
         window.video_panel.btn_play.clicked.connect(self._toggle_pause)
         window.video_panel.loop_check.stateChanged.connect(
             lambda s: setattr(self, '_loop', s == 2)   # Qt.Checked == 2
@@ -119,6 +197,49 @@ class AppController:
 
         # Start with idle
         self._start_idle()
+
+    # ─────────────────────────────────────────
+    # Voice
+    # ─────────────────────────────────────────
+    def _on_voice(self):
+        """Toggle recording — first click starts, second click stops."""
+        if self._voice_worker and self._voice_worker.isRunning():
+            # Second click — stop recording, send what we have
+            self._voice_worker.stop_recording()
+            self.window.set_status("TRANSCRIBING...", "#00c6ff")
+            self.window.set_mic_recording(False)
+            self.window.set_voice_enabled(False)
+            return
+        # First click — start recording
+        self.window.set_translate_enabled(False)
+        self.window.set_status("PREPARING MIC...", "#00c6ff")
+        self._voice_worker = VoiceWorker(max_seconds=120)
+        self._voice_worker.recording_started.connect(self._on_voice_recording)
+        self._voice_worker.done.connect(self._on_voice_done)
+        self._voice_worker.error.connect(self._on_voice_error)
+        self._voice_worker.start()
+
+    def _on_voice_recording(self):
+        self.window.set_mic_recording(True)
+        self.window.set_status("🎤  RECORDING...", "#ff4444")
+
+    def _on_voice_done(self, text: str):
+        self.window.set_mic_recording(False)
+        self.window.set_voice_enabled(True)
+        self.window.set_translate_enabled(True)
+        if text.strip():
+            self.window.insert_text(text)
+            self.window.set_status("TRANSCRIBED ✓", "#00e676")
+        else:
+            self.window.set_error("No speech detected")
+            self.window.set_status("STANDBY", "#1e2e5a")
+
+    def _on_voice_error(self, msg: str):
+        self.window.set_mic_recording(False)
+        self.window.set_voice_enabled(True)
+        self.window.set_translate_enabled(True)
+        self.window.set_error(f"Voice error: {msg}")
+        self.window.set_status("ERROR", "#ff4466")
 
     # ─────────────────────────────────────────
     # Idle
