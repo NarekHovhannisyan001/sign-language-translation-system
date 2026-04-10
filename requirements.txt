@@ -30,3 +30,4 @@ tqdm==4.67.1
 zipp==3.23.0
 stanza
 pyqt6
+pyaudio
