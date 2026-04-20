@@ -1,25 +1,525 @@
-import sys
-import os
-import shutil
+from __future__ import annotations
+
 import cv2
 
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFileDialog, QTextEdit, QFrame, QSizePolicy, QComboBox, QCheckBox, QMenu
+from PyQt6.QtCore import (
+    Qt, QSize, QTimer, QRectF, QPointF, pyqtSignal, QThread, QPoint,
 )
-from PyQt6.QtGui import QImage, QPixmap, QFont
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QPoint
+from PyQt6.QtGui import (
+    QColor, QPainter, QPainterPath, QPen, QFont,
+    QIcon, QPixmap, QImage,
+)
+from PyQt6.QtWidgets import (
+    QMainWindow, QWidget, QLabel, QPushButton,
+    QHBoxLayout, QVBoxLayout, QPlainTextEdit, QFrame, QSizePolicy,
+    QGraphicsDropShadowEffect, QButtonGroup, QMenu, QCheckBox,
+)
+
+# ── Design tokens ──────────────────────────────────────────────────────────────
+C_CANVAS    = "#F7F5F1"
+C_SURFACE   = "#FFFFFF"
+C_SAGE      = "#ECEBE6"
+C_BORDER    = "#E3E1DB"
+C_MUTED     = "#6E6B63"
+C_INK       = "#1A1A1F"
+C_TEAL      = "#2B7A78"
+C_TEAL_DEEP = "#1F5D5B"
+C_TEAL_SOFT = "#D8E4E0"
+C_CORAL     = "#E07856"
+C_AMBER     = "#C68A3C"
+C_MINT      = "#E6EFEB"
+
+UI_FONT   = "Inter"
+MONO_FONT = "JetBrains Mono"
 
 QUICK_PHRASES = [
-    "Բարև Ձեզ","Ինչպե՞ս եք","Շնորհակալություն",
+    "Բարև Ձեզ", "Ինչպե՞ս եք", "Շնորհակալություն",
     "Ես ուզում եմ", "Օգնեք ինձ", "Հասկացա",
-    "Ոչ", "Այո", "Ճիշտ է", "Ցտեսություն"
+    "Ոչ", "Այո", "Ճիշտ է", "Ցտեսություն",
 ]
 
 
-# ─────────────────────────────────────────────
-# Video Playback Worker
-# ─────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _font(family: str, size: int, weight: int = QFont.Weight.Normal,
+          letter_spacing: float = 0.0) -> QFont:
+    f = QFont(family)
+    f.setFamilies([family, "Helvetica Neue", "Arial", "Sans Serif"])
+    f.setPixelSize(size)
+    f.setWeight(weight)
+    if letter_spacing:
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, letter_spacing)
+    return f
+
+
+def _apply_shadow(widget: QWidget, blur: int = 24, y: int = 8,
+                  alpha: int = 18) -> None:
+    e = QGraphicsDropShadowEffect(widget)
+    e.setBlurRadius(blur)
+    e.setOffset(0, y)
+    e.setColor(QColor(26, 26, 31, alpha))
+    widget.setGraphicsEffect(e)
+
+
+# ── Icon factory ───────────────────────────────────────────────────────────────
+
+class Icon:
+    @staticmethod
+    def _base(size: int = 20, color: str = C_INK,
+              stroke: float = 1.8) -> tuple[QPixmap, QPainter, QPen]:
+        pm = QPixmap(QSize(size, size) * 2)
+        pm.setDevicePixelRatio(2.0)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.scale(2, 2)
+        pen = QPen(QColor(color))
+        pen.setWidthF(stroke)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        return pm, p, pen
+
+    @classmethod
+    def play(cls, size=20, color=C_INK):
+        pm, p, _ = cls._base(size, color)
+        path = QPainterPath()
+        path.moveTo(7, 5); path.lineTo(7, size - 5)
+        path.lineTo(size - 5, size / 2); path.closeSubpath()
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawPath(path); p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def pause(cls, size=20, color=C_INK):
+        pm, p, _ = cls._base(size, color)
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(QRectF(6, 5, 3.2, size - 10), 1, 1)
+        p.drawRoundedRect(QRectF(size - 9.2, 5, 3.2, size - 10), 1, 1)
+        p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def prev(cls, size=20, color=C_INK):
+        pm, p, _ = cls._base(size, color)
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        path = QPainterPath()
+        path.moveTo(size - 6, 5); path.lineTo(size - 6, size - 5)
+        path.lineTo(8, size / 2); path.closeSubpath()
+        p.drawPath(path)
+        p.drawRoundedRect(QRectF(5, 5, 2.2, size - 10), 1, 1)
+        p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def next(cls, size=20, color=C_INK):
+        pm, p, _ = cls._base(size, color)
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        path = QPainterPath()
+        path.moveTo(6, 5); path.lineTo(6, size - 5)
+        path.lineTo(size - 8, size / 2); path.closeSubpath()
+        p.drawPath(path)
+        p.drawRoundedRect(QRectF(size - 7.2, 5, 2.2, size - 10), 1, 1)
+        p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def replay(cls, size=20, color=C_INK):
+        pm, p, _ = cls._base(size, color, stroke=1.9)
+        r = QRectF(4, 4, size - 8, size - 8)
+        p.drawArc(r, 45 * 16, 270 * 16)
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        ah = QPainterPath()
+        ah.moveTo(size - 4.5, 7.5); ah.lineTo(size - 8.5, 5.5)
+        ah.lineTo(size - 7.0, 9.5); ah.closeSubpath()
+        p.drawPath(ah); p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def mic(cls, size=20, color=C_INK):
+        pm, p, pen = cls._base(size, color, stroke=1.8)
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(QRectF(size / 2 - 3, 3, 6, 10), 3, 3)
+        p.setBrush(Qt.BrushStyle.NoBrush); p.setPen(pen)
+        p.drawArc(QRectF(size / 2 - 5.5, 7, 11, 8), 200 * 16, 140 * 16)
+        p.drawLine(QPointF(size / 2, 15), QPointF(size / 2, size - 3))
+        p.drawLine(QPointF(size / 2 - 3, size - 3), QPointF(size / 2 + 3, size - 3))
+        p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def stop_square(cls, size=20, color="#FFFFFF"):
+        pm, p, _ = cls._base(size, color)
+        p.setBrush(QColor(color)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(QRectF(5, 5, size - 10, size - 10), 2, 2)
+        p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def download(cls, size=20, color=C_INK):
+        pm, p, _ = cls._base(size, color)
+        mid = size / 2
+        p.drawLine(QPointF(mid, 4), QPointF(mid, size - 7))
+        arrow = QPainterPath()
+        arrow.moveTo(mid - 3.5, size - 10); arrow.lineTo(mid, size - 6.5)
+        arrow.lineTo(mid + 3.5, size - 10)
+        p.drawPath(arrow)
+        p.drawLine(QPointF(4, size - 4), QPointF(size - 4, size - 4))
+        p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def share(cls, size=20, color=C_INK):
+        pm, p, _ = cls._base(size, color)
+        mid = size / 2
+        p.drawLine(QPointF(mid, size - 5), QPointF(mid, 5))
+        arrow = QPainterPath()
+        arrow.moveTo(mid - 3.5, 8.5); arrow.lineTo(mid, 5)
+        arrow.lineTo(mid + 3.5, 8.5)
+        p.drawPath(arrow)
+        p.drawLine(QPointF(4, 11), QPointF(4, size - 4))
+        p.drawLine(QPointF(4, size - 4), QPointF(size - 4, size - 4))
+        p.drawLine(QPointF(size - 4, size - 4), QPointF(size - 4, 11))
+        p.end()
+        return QIcon(pm)
+
+    @classmethod
+    def translate_arrow(cls, size=20, color="#FFFFFF"):
+        pm, p, _ = cls._base(size, color, stroke=2.0)
+        p.drawLine(QPointF(4, size / 2), QPointF(size - 6, size / 2))
+        arrow = QPainterPath()
+        arrow.moveTo(size - 9, size / 2 - 4)
+        arrow.lineTo(size - 5, size / 2)
+        arrow.lineTo(size - 9, size / 2 + 4)
+        p.drawPath(arrow); p.end()
+        return QIcon(pm)
+
+
+# ── Status Pill ────────────────────────────────────────────────────────────────
+
+class StatusPill(QFrame):
+    STATES = {
+        "STANDBY":   (C_MUTED,  "Ready"),
+        "RECORDING": (C_CORAL,  "Recording"),
+        "PLAYING":   (C_TEAL,   "Playing"),
+        "DONE":      (C_TEAL,   "Complete"),
+        "ERROR":     (C_AMBER,  "Error"),
+        "WORKING":   (C_TEAL,   "Working"),
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StatusPill")
+        self._state = "STANDBY"
+        self._pulse = 0.0
+
+        self.setFixedHeight(36)
+        self.setMinimumWidth(180)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 0, 16, 0)
+        lay.setSpacing(10)
+
+        self._dot = QLabel()
+        self._dot.setFixedSize(10, 10)
+        self._label = QLabel("STANDBY  ·  Ready")
+        self._label.setFont(_font(MONO_FONT, 12, QFont.Weight.Medium, 1.2))
+
+        lay.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addWidget(self._label, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addStretch(1)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._tick)
+        self._repaint_style()
+
+    def setState(self, state: str, custom_text: str = "") -> None:
+        state = state.upper()
+        if state not in self.STATES:
+            state = "STANDBY"
+        self._state = state
+        _, human = self.STATES[state]
+        display = custom_text if custom_text else human
+        self._label.setText(f"{state}  ·  {display}")
+        self._label.setStyleSheet(f"color: {C_INK};")
+        if state in ("RECORDING", "PLAYING", "WORKING"):
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
+            self._pulse = 0.0
+        self._repaint_style()
+        self.update()
+
+    def _tick(self):
+        self._pulse = (self._pulse + 0.08) % 1.0
+        self.update()
+
+    def _repaint_style(self):
+        bg = {
+            "STANDBY":   C_SAGE,
+            "RECORDING": "#F9E5DE",
+            "PLAYING":   C_TEAL_SOFT,
+            "DONE":      C_MINT,
+            "ERROR":     "#F4E6CE",
+            "WORKING":   C_TEAL_SOFT,
+        }[self._state]
+        self.setStyleSheet(f"""
+            #StatusPill {{
+                background: {bg};
+                border-radius: 18px;
+                border: 1px solid {C_BORDER};
+            }}
+        """)
+
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        color, _ = self.STATES[self._state]
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        dot_x, dot_y = 18, self.height() / 2
+        if self._timer.isActive():
+            halo = abs((self._pulse * 2) - 1)
+            ring = QColor(color)
+            ring.setAlphaF(0.25 * (1 - halo))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(ring)
+            p.drawEllipse(QPointF(dot_x, dot_y), 6 + halo * 7, 6 + halo * 7)
+        p.setBrush(QColor(color))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QPointF(dot_x, dot_y), 5, 5)
+        p.end()
+
+
+# ── Video Stage ────────────────────────────────────────────────────────────────
+
+class VideoStage(QFrame):
+    """Simple dark-card video display using a QLabel — no custom painting."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("VideoStage")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setStyleSheet("""
+            #VideoStage { background: #111216; border-radius: 18px; }
+        """)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        self._video_label = QLabel()
+        self._video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._video_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._video_label.setStyleSheet("background: transparent;")
+
+        self._placeholder = QLabel("[ Sign Preview ]")
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setFont(_font(MONO_FONT, 13))
+        self._placeholder.setStyleSheet("color: #2a2a3a; background: transparent; letter-spacing: 3px;")
+        self._placeholder.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        lay.addWidget(self._video_label)
+        lay.addWidget(self._placeholder)
+        self._video_label.hide()
+
+    def setFrame(self, frame) -> None:
+        if isinstance(frame, QImage):
+            pix = QPixmap.fromImage(frame)
+        elif isinstance(frame, QPixmap):
+            pix = frame
+        else:
+            pix = None
+
+        if pix and not pix.isNull():
+            self._placeholder.hide()
+            self._video_label.show()
+            self._video_label.setPixmap(
+                pix.scaled(
+                    self._video_label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        else:
+            self._video_label.hide()
+            self._placeholder.show()
+
+    def clear(self):
+        self._video_label.hide()
+        self._placeholder.show()
+
+
+# ── Segmented Speed Control ────────────────────────────────────────────────────
+
+class SegmentedControl(QFrame):
+    """Pill-shaped segmented control. Exposes currentText() and
+    currentIndexChanged for compatibility with main.py."""
+
+    changed             = pyqtSignal(float)
+    currentIndexChanged = pyqtSignal(int)
+
+    def __init__(self, options: list[tuple[str, float]], default_index: int = 1,
+                 parent=None):
+        super().__init__(parent)
+        self.setObjectName("Segmented")
+        self._options  = options
+        self._values   = [v for _, v in options]
+        self._cur      = default_index
+        self._buttons: list[QPushButton] = []
+        self._group    = QButtonGroup(self)
+        self._group.setExclusive(True)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(0)
+
+        for i, (label, _) in enumerate(options):
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            b.setFont(_font(MONO_FONT, 12, QFont.Weight.Medium))
+            b.setFixedHeight(32)
+            b.setMinimumWidth(46)
+            self._buttons.append(b)
+            self._group.addButton(b, i)
+            lay.addWidget(b)
+            b.clicked.connect(lambda _=False, idx=i: self._select(idx))
+
+        self._select(default_index, emit=False)
+        self.setStyleSheet(f"""
+            #Segmented {{
+                background: {C_SAGE};
+                border: 1px solid {C_BORDER};
+                border-radius: 20px;
+            }}
+            QPushButton {{
+                background: transparent; color: {C_MUTED};
+                border: none; border-radius: 16px; padding: 0 12px;
+            }}
+            QPushButton:checked {{ background: {C_SURFACE}; color: {C_INK}; }}
+            QPushButton:hover:!checked {{ color: {C_INK}; }}
+            QPushButton:focus {{ outline: none; }}
+        """)
+
+    def _select(self, idx: int, emit: bool = True) -> None:
+        self._cur = idx
+        for i, b in enumerate(self._buttons):
+            b.setChecked(i == idx)
+        if emit:
+            self.changed.emit(self._values[idx])
+            self.currentIndexChanged.emit(idx)
+
+    def currentText(self) -> str:
+        return self._options[self._cur][0]
+
+
+# ── Icon Button ────────────────────────────────────────────────────────────────
+
+class IconButton(QPushButton):
+    def __init__(self, icon: QIcon, tooltip: str, size: int = 44,
+                 primary: bool = False, parent=None):
+        super().__init__(parent)
+        self.setIcon(icon)
+        self.setIconSize(QSize(20, 20))
+        self.setToolTip(tooltip)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(size, size)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._primary = primary
+        self._apply_style()
+
+    def _apply_style(self):
+        r = self.width() // 2
+        if self._primary:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C_INK}; border: none; border-radius: {r}px;
+                }}
+                QPushButton:hover    {{ background: {C_TEAL_DEEP}; }}
+                QPushButton:pressed  {{ background: {C_TEAL}; }}
+                QPushButton:disabled {{ background: {C_BORDER}; }}
+                QPushButton:focus    {{ border: 2px solid {C_TEAL}; }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C_SURFACE};
+                    border: 1px solid {C_BORDER};
+                    border-radius: {r}px;
+                }}
+                QPushButton:hover    {{ background: {C_TEAL_SOFT}; border-color: {C_TEAL}; }}
+                QPushButton:pressed  {{ background: {C_MINT}; }}
+                QPushButton:disabled {{ background: {C_SAGE}; border-color: {C_BORDER}; }}
+                QPushButton:focus    {{ border: 2px solid {C_TEAL}; }}
+            """)
+
+
+# ── Phrase Chip ────────────────────────────────────────────────────────────────
+
+class PhraseChip(QPushButton):
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFont(_font(UI_FONT, 13, QFont.Weight.Medium))
+        self.setFixedHeight(34)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: {C_SURFACE}; color: {C_INK};
+                border: 1px solid {C_BORDER}; border-radius: 17px; padding: 0 14px;
+            }}
+            QPushButton:hover   {{ background: {C_TEAL_SOFT}; border-color: {C_TEAL}; color: {C_TEAL_DEEP}; }}
+            QPushButton:pressed {{ background: {C_MINT}; }}
+            QPushButton:focus   {{ border: 2px solid {C_TEAL}; padding: 0 13px; }}
+        """)
+
+
+# ── Armenian Text Input ────────────────────────────────────────────────────────
+
+class ArmenianTextInput(QPlainTextEdit):
+    """Enter = translate, Shift+Enter = new line (existing behaviour preserved)."""
+
+    enter_pressed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ArmInput")
+        self.setPlaceholderText("Գրեք հայերեն տեքստ…")
+        self.setTabChangesFocus(True)
+        self.setFont(_font(UI_FONT, 16))
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setMinimumHeight(160)
+        self.setMaximumHeight(240)
+        self.setStyleSheet(f"""
+            #ArmInput {{
+                background: {C_SURFACE}; color: {C_INK};
+                border: 1.5px solid {C_BORDER};
+                border-radius: 16px; padding: 16px 18px;
+                selection-background-color: {C_TEAL_SOFT};
+                selection-color: {C_INK};
+            }}
+            #ArmInput:focus {{ border: 1.5px solid {C_TEAL}; }}
+        """)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                super().keyPressEvent(event)
+            else:
+                self.enter_pressed.emit()
+        else:
+            super().keyPressEvent(event)
+
+
+# ── Video Worker ───────────────────────────────────────────────────────────────
+# Kept unchanged from original ui.py — cv2-based, reads video files.
+
 class VideoWorker(QThread):
     frame_ready = pyqtSignal(QImage)
     finished    = pyqtSignal()
@@ -28,15 +528,15 @@ class VideoWorker(QThread):
         super().__init__()
         self.video_path = video_path
         self.size       = size
-        self.speed      = speed   # 0.5 / 1.0 / 1.5 / 2.0
-        self.loop       = loop    # if True, seeks back to frame 0 instead of stopping
+        self.speed      = speed
+        self.loop       = loop
         self._stop      = False
         self._paused    = False
 
-    def stop(self):   self._stop   = True
-    def pause(self):  self._paused = True
-    def resume(self): self._paused = False
-    def set_speed(self, speed): self.speed = speed
+    def stop(self):              self._stop   = True
+    def pause(self):             self._paused = True
+    def resume(self):            self._paused = False
+    def set_speed(self, speed):  self.speed   = speed
 
     def run(self):
         cap = cv2.VideoCapture(self.video_path)
@@ -48,7 +548,6 @@ class VideoWorker(QThread):
             ret, frame = cap.read()
             if not ret:
                 if self.loop:
-                    # Seek back to beginning — no gap, no new thread
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 10)
                     continue
                 break
@@ -57,477 +556,518 @@ class VideoWorker(QThread):
             h, w, ch = frame.shape
             img = QImage(frame.data, w, h, ch * w, QImage.Format.Format_RGB888)
             self.frame_ready.emit(img.copy())
-            delay = max(1, int(1000 / (fps * self.speed)))
-            self.msleep(delay)
+            self.msleep(max(1, int(1000 / (fps * self.speed))))
         cap.release()
         self.finished.emit()
 
 
-# ─────────────────────────────────────────────
-# Reusable Widgets
-# ─────────────────────────────────────────────
-class ToolBtn(QPushButton):
-    def __init__(self, text, accent=False, parent=None):
-        super().__init__(text, parent)
-        self.setFixedHeight(34)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
-        if accent:
-            self.setStyleSheet("""
-                QPushButton {
-                    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #00c6ff,stop:1 #0072ff);
-                    color: white; border: none; border-radius: 7px;
-                    padding: 0 18px; letter-spacing: 1px;
-                }
-                QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #33d6ff,stop:1 #2299ff); }
-                QPushButton:disabled { background: #1a1a2e; color: #333355; }
-            """)
-        else:
-            self.setStyleSheet("""
-                QPushButton {
-                    background: transparent; color: #8899cc;
-                    border: 1px solid #1e1e40; border-radius: 7px;
-                    padding: 0 14px; letter-spacing: 1px;
-                }
-                QPushButton:hover { background: #0e0e28; color: #aabbee; border-color: #3344aa; }
-                QPushButton:disabled { color: #252540; border-color: #111128; }
-            """)
+# ── Video Panel ────────────────────────────────────────────────────────────────
+# Redesigned look; btn_play / loop_check / speed_combo names kept for main.py.
 
-
-class PhraseChip(QPushButton):
-    def __init__(self, text, parent=None):
-        super().__init__(text, parent)
-        self.setFixedHeight(30)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFont(QFont("Courier New", 10))
-        self.setStyleSheet("""
-            QPushButton { background:#0d0d24; color:#7788bb;
-                border:1px solid #1e1e44; border-radius:15px; padding:0 14px; }
-            QPushButton:hover { background:#141438; color:#aabbee; border-color:#3344aa; }
-            QPushButton:pressed { background:#0a0a1e; }
-        """)
-
-
-# ─────────────────────────────────────────────
-# Video Panel
-# ─────────────────────────────────────────────
 class VideoPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setStyleSheet("QFrame { background:#03030f; border:1px solid #0e0e2a; border-radius:10px; }")
+        self.setStyleSheet(f"QFrame {{ background: {C_CANVAS}; border: none; }}")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(14)
 
-        self.video_label = QLabel()
-        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.video_label.setStyleSheet("background:#03030f; border-radius:10px 10px 0 0;")
+        # Video display
+        self._stage = VideoStage()
+        _apply_shadow(self._stage, blur=34, y=14, alpha=28)
+        layout.addWidget(self._stage, 1)
 
-        self.placeholder = QLabel("[ Sign Preview ]")
-        self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.placeholder.setFont(QFont("Courier New", 13))
-        self.placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.placeholder.setStyleSheet("color:#111130; background:transparent; letter-spacing:3px;")
-
-        stack = QWidget()
-        stack.setStyleSheet("background:transparent;")
-        sl = QVBoxLayout(stack)
-        sl.setContentsMargins(0, 0, 0, 0)
-        sl.addWidget(self.video_label)
-        self.video_label.hide()
-        sl.addWidget(self.placeholder)
-        layout.addWidget(stack)
-
-        # Controls bar
-        ctrl = QFrame()
-        ctrl.setFixedHeight(82)
-        ctrl.setStyleSheet("QFrame { background:#07071a; border-top:1px solid #0e0e28; border-radius:0 0 10px 10px; }")
-        cl = QHBoxLayout(ctrl)
-        cl.setContentsMargins(14, 0, 14, 0)
-        cl.setSpacing(6)
-
-        pbtn_small = """
-            QPushButton { background:transparent; color:#556688; border:none; font-size:22px; padding:0 5px; }
-            QPushButton:hover { color:#aabbee; }
-            QPushButton:disabled { color:#1e1e3a; }
-        """
-        pbtn_large = """
-            QPushButton { background:#0d0d28; color:#aabbee; border:1px solid #1e1e44;
-                border-radius:12px; font-size:30px; padding:0; }
-            QPushButton:hover { background:#141440; color:#00c6ff; border-color:#0050cc; }
-            QPushButton:pressed { background:#080820; }
-            QPushButton:disabled { color:#1e1e3a; border-color:#111128; background:transparent; }
-        """
-
-        self.btn_prev   = QPushButton("⏮"); self.btn_prev.setFixedSize(50, 50)
-        self.btn_play   = QPushButton("▶"); self.btn_play.setFixedSize(66, 66)
-        self.btn_next   = QPushButton("⏭"); self.btn_next.setFixedSize(50, 50)
-        self.btn_replay = QPushButton("↺"); self.btn_replay.setFixedSize(50, 50)
-
-        self.btn_prev.setStyleSheet(pbtn_small)
-        self.btn_play.setStyleSheet(pbtn_large)
-        self.btn_next.setStyleSheet(pbtn_small)
-        self.btn_replay.setStyleSheet(pbtn_small)
-
-        for b in [self.btn_prev, self.btn_play, self.btn_next, self.btn_replay]:
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        self.loop_check = QCheckBox("Loop")
-        self.loop_check.setFont(QFont("Courier New", 9))
-        self.loop_check.setStyleSheet("color:#334466; spacing:4px;")
-
-        self.speed_combo = QComboBox()
-        self.speed_combo.addItems(["0.5×", "1×", "1.5×", "2×"])
-        self.speed_combo.setCurrentIndex(1)
-        self.speed_combo.setFixedWidth(62)
-        self.speed_combo.setFont(QFont("Courier New", 9))
-        self.speed_combo.setStyleSheet("""
-            QComboBox { background:#0a0a1e; color:#556688; border:1px solid #1a1a35;
-                border-radius:4px; padding:2px 6px; }
-            QComboBox::drop-down { border:none; }
-            QComboBox QAbstractItemView { background:#0d0d22; color:#8899cc;
-                border:1px solid #1a1a35; selection-background-color:#1a2a5a; }
+        # Playback bar
+        bar = QFrame()
+        bar.setObjectName("PlaybackBar")
+        bar.setFixedHeight(76)
+        bar.setStyleSheet(f"""
+            #PlaybackBar {{
+                background: {C_SURFACE};
+                border: 1px solid {C_BORDER};
+                border-radius: 18px;
+            }}
         """)
+        _apply_shadow(bar, blur=24, y=8, alpha=12)
 
-        self.status_dot  = QLabel("●")
-        self.status_dot.setFont(QFont("Courier New", 8))
-        self.status_dot.setStyleSheet("color:#1e1e3a;")
-        self.status_text = QLabel("STANDBY")
-        self.status_text.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self.status_text.setStyleSheet("color:#1e1e3a; letter-spacing:2px;")
+        bl = QHBoxLayout(bar)
+        bl.setContentsMargins(16, 12, 16, 12)
+        bl.setSpacing(12)
 
-        cl.addStretch()
-        cl.addWidget(self.btn_prev)
-        cl.addWidget(self.btn_play)
-        cl.addWidget(self.btn_next)
-        cl.addWidget(self.btn_replay)
-        cl.addStretch()
-        cl.addWidget(self.loop_check)
-        cl.addWidget(self.speed_combo)
-        cl.addSpacing(8)
-        cl.addWidget(self.status_dot)
-        cl.addWidget(self.status_text)
-        layout.addWidget(ctrl)
+        # Transport buttons — small symbol + tooltip on hover
+        self.btn_prev   = self._tbtn("⏮", "Previous translation",   44)
+        self.btn_play   = self._tbtn("▶", "Play / Pause",            52, primary=True)
+        self.btn_next   = self._tbtn("⏭", "Next translation",        44)
+        self.btn_replay = self._tbtn("↺", "Replay from beginning",   44)
+
+        bl.addWidget(self.btn_prev)
+        bl.addWidget(self.btn_play)
+        bl.addWidget(self.btn_next)
+        bl.addSpacing(4)
+        bl.addWidget(self.btn_replay)
+        bl.addStretch(1)
+
+        sp_lbl = QLabel("SPEED")
+        sp_lbl.setFont(_font(MONO_FONT, 10, QFont.Weight.Medium, 1.8))
+        sp_lbl.setStyleSheet(f"color: {C_MUTED};")
+        bl.addWidget(sp_lbl)
+
+        # SegmentedControl styled as test.py; exposes currentText() and
+        # currentIndexChanged so main.py's AppController works unchanged.
+        self.speed_combo = SegmentedControl(
+            [("0.5×", 0.5), ("1×", 1.0), ("1.5×", 1.5), ("2×", 2.0)],
+            default_index=1,
+        )
+        bl.addWidget(self.speed_combo)
+        bl.addSpacing(8)
+
+        # QCheckBox kept — main.py connects stateChanged
+        self.loop_check = QCheckBox("Loop")
+        self.loop_check.setFont(_font(UI_FONT, 13, QFont.Weight.Medium))
+        self.loop_check.setStyleSheet(f"""
+            QCheckBox {{ color: {C_INK}; spacing: 6px; }}
+            QCheckBox::indicator {{
+                width: 18px; height: 18px;
+                border: 1.5px solid {C_BORDER}; border-radius: 5px;
+                background: {C_SURFACE};
+            }}
+            QCheckBox::indicator:checked {{
+                background: {C_TEAL}; border-color: {C_TEAL};
+            }}
+            QCheckBox::indicator:hover {{ border-color: {C_TEAL}; }}
+        """)
+        bl.addWidget(self.loop_check)
+
+        layout.addWidget(bar)
+
+    @staticmethod
+    def _tbtn(symbol: str, tooltip: str, size: int = 44, primary: bool = False) -> QPushButton:
+        b = QPushButton(symbol)
+        b.setToolTip(tooltip)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setFixedSize(size, size)
+        b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        f = QFont()
+        f.setPixelSize(size // 3)
+        b.setFont(f)
+        r = size // 2
+        if primary:
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C_INK}; color: #FFFFFF;
+                    border: none; border-radius: {r}px;
+                }}
+                QPushButton:hover    {{ background: {C_TEAL_DEEP}; }}
+                QPushButton:pressed  {{ background: {C_TEAL}; }}
+                QPushButton:disabled {{ background: {C_BORDER}; color: {C_MUTED}; }}
+            """)
+        else:
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C_SURFACE}; color: {C_INK};
+                    border: 1px solid {C_BORDER}; border-radius: {r}px;
+                }}
+                QPushButton:hover    {{ background: {C_TEAL_SOFT}; border-color: {C_TEAL}; }}
+                QPushButton:pressed  {{ background: {C_MINT}; }}
+                QPushButton:disabled {{ background: {C_SAGE}; color: {C_MUTED}; border-color: {C_BORDER}; }}
+            """)
+        return b
 
     def show_frame(self, img):
-        self.placeholder.hide()
-        self.video_label.show()
-        pix = QPixmap.fromImage(img)
-        self.video_label.setPixmap(
-            pix.scaled(self.video_label.size(),
-                       Qt.AspectRatioMode.KeepAspectRatio,
-                       Qt.TransformationMode.SmoothTransformation)
-        )
+        self._stage.setFrame(img)
 
-    def set_status(self, text, color="#1e1e3a", playing=False):
-        self.status_dot.setStyleSheet(f"color:{color}; font-family:'Courier New';")
-        self.status_text.setText(text)
-        self.status_text.setStyleSheet(
-            f"color:{color}; font-family:'Courier New'; font-size:8px; font-weight:700; letter-spacing:2px;"
-        )
+    def set_status(self, *_, playing=False):
         self.btn_play.setText("⏸" if playing else "▶")
 
 
+# ── Main Window ────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────
-# Smart Text Input — Enter triggers translate
-# Shift+Enter adds a new line
-# ─────────────────────────────────────────────
-class ArmenianTextInput(QTextEdit):
-    enter_pressed = pyqtSignal()
-
-    def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                super().keyPressEvent(event)   # Shift+Enter = new line
-            else:
-                self.enter_pressed.emit()       # Enter = translate
-        else:
-            super().keyPressEvent(event)
-
-# ─────────────────────────────────────────────
-# Main Window — UI only, emits signals to main.py
-# ─────────────────────────────────────────────
-class MainWindow(QWidget):
-    # Signals emitted to main.py — no logic here
-    translate_requested = pyqtSignal(str)   # user pressed Translate
-    replay_requested    = pyqtSignal()      # user pressed Replay
-    prev_requested      = pyqtSignal()      # user pressed ⏮
-    next_requested      = pyqtSignal()      # user pressed ⏭
-    save_requested      = pyqtSignal()      # user pressed Save
-    voice_requested     = pyqtSignal()      # user pressed Mic
+class MainWindow(QMainWindow):
+    translate_requested = pyqtSignal(str)
+    replay_requested    = pyqtSignal()
+    prev_requested      = pyqtSignal()
+    next_requested      = pyqtSignal()
+    save_requested      = pyqtSignal()
+    voice_requested     = pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        self._phrase_chips: list[PhraseChip] = []
         self.setWindowTitle("Sign Language Translation System")
         self.setMinimumSize(1100, 720)
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setStyleSheet("QWidget { background:#06060f; color:#c8d8ff; }")
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        self.setStyleSheet(f"""
+            QMainWindow {{ background: {C_CANVAS}; }}
+            QToolTip {{
+                background: {C_INK}; color: #FFFFFF;
+                border: none; padding: 6px 10px; border-radius: 6px;
+                font-family: "{UI_FONT}";
+            }}
+        """)
+        root = QWidget(self)
+        self.setCentralWidget(root)
 
-        # ── TOOLBAR ──────────────────────────
-        toolbar = QFrame()
-        toolbar.setFixedHeight(54)
-        toolbar.setStyleSheet("QFrame { background:#08081a; border-bottom:1px solid #0e0e28; }")
-        tb = QHBoxLayout(toolbar)
-        tb.setContentsMargins(20, 0, 20, 0)
-        tb.setSpacing(8)
+        rlay = QVBoxLayout(root)
+        rlay.setContentsMargins(28, 22, 28, 22)
+        rlay.setSpacing(18)
 
-        logo = QLabel("SLTS")
-        logo.setFont(QFont("Courier New", 16, QFont.Weight.Bold))
-        logo.setStyleSheet("color:#00c6ff; letter-spacing:6px; margin-right:16px;")
+        rlay.addWidget(self._build_header())
+        rlay.addWidget(self._build_body(), 1)
+        rlay.addWidget(self._build_footer())
 
-        self.btn_replay_tb = ToolBtn("↺ Replay")
-        self.btn_replay_tb.setFixedWidth(100)
-        self.btn_replay_tb.setEnabled(False)
-        self.btn_replay_tb.clicked.connect(self.replay_requested)
+    # ── Header ─────────────────────────────────────────────────────────────────
 
-        self.btn_save = ToolBtn("⬇ Save")
-        self.btn_save.setFixedWidth(90)
+    def _build_header(self) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(14)
+
+        # Logo mark — painted inline
+        mark = QLabel()
+        mark.setFixedSize(40, 40)
+        pm = QPixmap(80, 80)
+        pm.setDevicePixelRatio(2.0)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.scale(2, 2)
+        p.setBrush(QColor(C_INK)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(QRectF(0, 0, 40, 40), 10, 10)
+        pen = QPen(QColor("#FFFFFF")); pen.setWidthF(2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawArc(QRectF(10, 10, 20, 20), 30 * 16, 210 * 16)
+        p.drawLine(QPointF(12, 28), QPointF(28, 28))
+        p.setBrush(QColor(C_TEAL)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QPointF(30, 12), 3, 3)
+        p.end()
+        mark.setPixmap(pm)
+
+        titles = QWidget()
+        tlay = QVBoxLayout(titles)
+        tlay.setContentsMargins(0, 0, 0, 0); tlay.setSpacing(0)
+        top = QLabel("SLTS")
+        top.setFont(_font(MONO_FONT, 11, QFont.Weight.Medium, 2.2))
+        top.setStyleSheet(f"color: {C_MUTED};")
+        ttl = QLabel("Armenian Sign Language Translation")
+        ttl.setFont(_font(UI_FONT, 20, QFont.Weight.DemiBold))
+        ttl.setStyleSheet(f"color: {C_INK};")
+        tlay.addWidget(top); tlay.addWidget(ttl)
+
+        lay.addWidget(mark, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addSpacing(6)
+        lay.addWidget(titles, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addStretch(1)
+
+        self.status_pill = StatusPill()
+
+        self.btn_save = QPushButton("  Save video")
+        self.btn_save.setIcon(Icon.download(20, C_INK))
+        self.btn_save.setIconSize(QSize(18, 18))
+        self.btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save.setFont(_font(UI_FONT, 13, QFont.Weight.Medium))
+        self.btn_save.setFixedHeight(36)
+        self.btn_save.setStyleSheet(self._ghost_btn_css())
         self.btn_save.clicked.connect(self.save_requested)
 
-        self.btn_export = ToolBtn("Export ▾")
-        self.btn_export.setFixedWidth(100)
+        self.btn_export = QPushButton("  Export")
+        self.btn_export.setIcon(Icon.share(20, C_INK))
+        self.btn_export.setIconSize(QSize(18, 18))
+        self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_export.setFont(_font(UI_FONT, 13, QFont.Weight.Medium))
+        self.btn_export.setFixedHeight(36)
+        self.btn_export.setStyleSheet(self._ghost_btn_css())
         self.btn_export.clicked.connect(self._export_menu)
 
-        self.btn_settings = ToolBtn("⚙")
-        self.btn_settings.setFixedWidth(40)
+        lay.addWidget(self.status_pill)
+        lay.addSpacing(8)
+        lay.addWidget(self.btn_save)
+        lay.addWidget(self.btn_export)
+        return w
 
-        tb.addWidget(logo)
-        tb.addWidget(self.btn_replay_tb)
-        tb.addWidget(self.btn_save)
-        tb.addWidget(self.btn_export)
-        tb.addStretch()
-        tb.addWidget(self.btn_settings)
-        root.addWidget(toolbar)
+    def _ghost_btn_css(self) -> str:
+        return f"""
+            QPushButton {{
+                background: {C_SURFACE}; color: {C_INK};
+                border: 1px solid {C_BORDER}; border-radius: 10px; padding: 0 14px;
+            }}
+            QPushButton:hover   {{ background: {C_TEAL_SOFT}; border-color: {C_TEAL}; color: {C_TEAL_DEEP}; }}
+            QPushButton:pressed {{ background: {C_MINT}; }}
+            QPushButton:disabled {{ color: {C_MUTED}; background: {C_SAGE}; }}
+            QPushButton:focus   {{ border: 2px solid {C_TEAL}; padding: 0 13px; }}
+        """
 
-        # ── TWO PANELS ───────────────────────
-        panels = QHBoxLayout()
-        panels.setContentsMargins(20, 16, 20, 12)
-        panels.setSpacing(16)
+    # ── Body ───────────────────────────────────────────────────────────────────
 
-        # Left panel
-        left_widget = QWidget()
-        left_widget.setFixedWidth(360)
-        left = QVBoxLayout(left_widget)
-        left.setSpacing(10)
-        left.setContentsMargins(0, 0, 0, 0)
+    def _build_body(self) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(20)
+        lay.addWidget(self._build_input_column(), 0)
+        lay.addWidget(self._build_stage_column(), 1)
+        return w
 
-        lh = QLabel("Armenian Text")
-        lh.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
-        lh.setStyleSheet("color:#334466; letter-spacing:2px;")
-        left.addWidget(lh)
+    def _build_input_column(self) -> QWidget:
+        col = QFrame()
+        col.setObjectName("InputCol")
+        col.setFixedWidth(400)
+        col.setStyleSheet(f"""
+            #InputCol {{
+                background: {C_SURFACE};
+                border: 1px solid {C_BORDER};
+                border-radius: 20px;
+            }}
+        """)
+        _apply_shadow(col, blur=30, y=10, alpha=14)
 
+        lay = QVBoxLayout(col)
+        lay.setContentsMargins(22, 22, 22, 22)
+        lay.setSpacing(14)
+
+        # Column label row
+        lbl_row = QHBoxLayout(); lbl_row.setSpacing(8)
+        kicker = QLabel("INPUT")
+        kicker.setFont(_font(MONO_FONT, 10, QFont.Weight.Medium, 1.8))
+        kicker.setStyleSheet(f"color: {C_MUTED};")
+        lang = QLabel("Armenian  ·  Հայերեն")
+        lang.setFont(_font(MONO_FONT, 10, QFont.Weight.Medium, 1.2))
+        lang.setStyleSheet(f"color: {C_TEAL_DEEP};")
+        lbl_row.addWidget(kicker); lbl_row.addStretch(1); lbl_row.addWidget(lang)
+        lay.addLayout(lbl_row)
+
+        # Text area
         self.text_input = ArmenianTextInput()
-        self.text_input.setPlaceholderText("Գրեք հայերեն տեքստ…")
-        self.text_input.setFont(QFont("Courier New", 14))
-        self.text_input.setMinimumHeight(160)
-        self.text_input.setMaximumHeight(220)
-        self.text_input.setStyleSheet("""
-            QTextEdit { background:#09091e; color:#c8d8ff;
-                border:1px solid #1a1a3a; border-radius:10px; padding:14px;
-                selection-background-color:#1a3a8a; }
-            QTextEdit:focus { border:1px solid #0050cc; }
-        """)
-        left.addWidget(self.text_input)
-
-        self.btn_translate = QPushButton("▶  TRANSLATE")
-        self.btn_translate.setFixedSize(200, 44)
-        self.btn_translate.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_translate.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
-        self.btn_translate.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #00c6ff,stop:1 #0072ff);
-                color: white; border: none; border-radius: 10px; letter-spacing: 2px;
-            }
-            QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #33d6ff,stop:1 #2299ff); }
-            QPushButton:disabled { background: #1a1a2e; color: #333355; }
-        """)
-        self.btn_translate.clicked.connect(self._on_translate_clicked)
         self.text_input.enter_pressed.connect(self._on_translate_clicked)
+        lay.addWidget(self.text_input)
 
-        # Mic button
-        self.btn_mic = QPushButton("🎤")
-        self.btn_mic.setFixedSize(44, 44)
-        self.btn_mic.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_mic.setToolTip("Record voice (10 sec)")
-        self.btn_mic.setFont(QFont("Segoe UI Emoji", 16))
-        self.btn_mic.setStyleSheet("""
-            QPushButton {
-                background: #0d1b2a; color: #00c6ff;
-                border: 1px solid #1e3a5a; border-radius: 10px;
-            }
-            QPushButton:hover { background: #142840; border-color: #0072ff; }
-            QPushButton:disabled { color: #1e2e3a; border-color: #0d1b2a; }
+        # Error banner (hidden until set_error is called)
+        self.info_label = QLabel("")
+        self.info_label.setWordWrap(True)
+        self.info_label.setFont(_font(UI_FONT, 12, QFont.Weight.Medium))
+        self.info_label.setStyleSheet(f"""
+            background: #F4E6CE; color: #6A4A14;
+            border: 1px solid #E6CE9E; border-radius: 10px; padding: 10px 12px;
         """)
+        self.info_label.hide()
+        lay.addWidget(self.info_label)
+
+        # Mic + Translate action row
+        action_row = QHBoxLayout(); action_row.setSpacing(10)
+
+        self.btn_mic = QPushButton("  Voice")
+        self.btn_mic.setIcon(Icon.mic(20, C_INK))
+        self.btn_mic.setIconSize(QSize(18, 18))
+        self.btn_mic.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_mic.setFont(_font(UI_FONT, 14, QFont.Weight.Medium))
+        self.btn_mic.setFixedHeight(48)
+        self.btn_mic.setMinimumWidth(120)
+        self.btn_mic.setToolTip("Record voice")
+        self._style_mic_idle()
         self.btn_mic.clicked.connect(self.voice_requested)
 
-        tr = QHBoxLayout()
-        tr.setSpacing(8)
-        tr.addStretch()
-        tr.addWidget(self.btn_mic)
-        tr.addWidget(self.btn_translate)
-        tr.addStretch()
-        left.addLayout(tr)
+        self.btn_translate = QPushButton("Translate to Sign  ")
+        self.btn_translate.setIcon(Icon.translate_arrow(20, "#FFFFFF"))
+        self.btn_translate.setIconSize(QSize(18, 18))
+        self.btn_translate.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.btn_translate.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_translate.setFont(_font(UI_FONT, 14, QFont.Weight.DemiBold))
+        self.btn_translate.setFixedHeight(48)
+        self.btn_translate.setStyleSheet(f"""
+            QPushButton {{
+                background: {C_INK}; color: #FFFFFF;
+                border: none; border-radius: 14px; padding: 0 18px;
+            }}
+            QPushButton:hover   {{ background: {C_TEAL_DEEP}; }}
+            QPushButton:pressed {{ background: {C_TEAL}; }}
+            QPushButton:disabled {{ background: {C_BORDER}; color: {C_MUTED}; }}
+            QPushButton:focus   {{ border: 2px solid {C_TEAL}; padding: 0 17px; }}
+        """)
+        self.btn_translate.clicked.connect(self._on_translate_clicked)
 
-        tok_hdr = QLabel("Parsed tokens")
-        tok_hdr.setFont(QFont("Courier New", 9))
-        tok_hdr.setStyleSheet("color:#222244; letter-spacing:2px;")
-        left.addWidget(tok_hdr)
+        action_row.addWidget(self.btn_mic)
+        action_row.addWidget(self.btn_translate, 1)
+        lay.addLayout(action_row)
 
-        self.parsed_label = QLabel("")
-        self.parsed_label.setFont(QFont("Courier New", 10))
-        self.parsed_label.setStyleSheet("color:#4455aa; letter-spacing:1px;")
-        self.parsed_label.setWordWrap(True)
-        left.addWidget(self.parsed_label)
+        lay.addStretch(1)
 
-        self.info_label = QLabel("")
-        self.info_label.setFont(QFont("Courier New", 9))
-        self.info_label.setStyleSheet("color:#ff5252; letter-spacing:1px;")
-        self.info_label.setWordWrap(True)
-        left.addWidget(self.info_label)
-        left.addStretch()
+        foot = QLabel("Enter to translate  ·  Shift+Enter for new line")
+        foot.setFont(_font(MONO_FONT, 10))
+        foot.setStyleSheet(f"color: {C_MUTED};")
+        foot.setAlignment(Qt.AlignmentFlag.AlignRight)
+        lay.addWidget(foot)
+        return col
 
-        # Right panel
-        right_widget = QWidget()
-        right_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        right = QVBoxLayout(right_widget)
-        right.setSpacing(10)
-        right.setContentsMargins(0, 0, 0, 0)
-
-        rh = QLabel("Sign Preview")
-        rh.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
-        rh.setStyleSheet("color:#334466; letter-spacing:2px;")
-        right.addWidget(rh)
-
+    def _build_stage_column(self) -> QWidget:
         self.video_panel = VideoPanel()
-        self.video_panel.btn_play.clicked.connect(self._on_play_clicked)
-        self.video_panel.btn_replay.clicked.connect(self.replay_requested)
+        # Disable replay until a translation has been generated
+        self.video_panel.btn_replay.setEnabled(False)
+        # Wire nav signals; btn_play is wired by main.py's AppController
         self.video_panel.btn_prev.clicked.connect(self.prev_requested)
         self.video_panel.btn_next.clicked.connect(self.next_requested)
-        right.addWidget(self.video_panel)
+        self.video_panel.btn_replay.clicked.connect(self.replay_requested)
+        return self.video_panel
 
-        panels.addWidget(left_widget)
-        panels.addWidget(right_widget)
-        panels_widget = QWidget()
-        panels_widget.setLayout(panels)
-        root.addWidget(panels_widget)
+    # ── Footer ─────────────────────────────────────────────────────────────────
 
-        # ── PHRASE CHIPS ─────────────────────
-        chips_frame = QFrame()
-        chips_frame.setFixedHeight(54)
-        chips_frame.setStyleSheet("QFrame { background:#07071a; border-top:1px solid #0e0e28; }")
-        cl = QHBoxLayout(chips_frame)
-        cl.setContentsMargins(20, 0, 20, 0)
-        cl.setSpacing(8)
-        ql = QLabel("Quick:")
-        ql.setFont(QFont("Courier New", 9))
-        ql.setStyleSheet("color:#222244; letter-spacing:1px;")
-        cl.addWidget(ql)
+    def _build_footer(self) -> QWidget:
+        w = QFrame()
+        w.setObjectName("Footer")
+        w.setStyleSheet(f"""
+            #Footer {{
+                background: {C_SAGE};
+                border-radius: 16px;
+                border: 1px solid {C_BORDER};
+            }}
+        """)
+        _apply_shadow(w, blur=16, y=4, alpha=10)
+
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(16, 10, 16, 10)
+        lay.setSpacing(8)
+
+        lbl = QLabel("Phrases:")
+        lbl.setFont(_font(MONO_FONT, 10, QFont.Weight.Medium, 1.2))
+        lbl.setStyleSheet(f"color: {C_MUTED};")
+        lay.addWidget(lbl)
+
         for phrase in QUICK_PHRASES:
             chip = PhraseChip(phrase)
             chip.clicked.connect(lambda _, p=phrase: self._insert_phrase(p))
-            cl.addWidget(chip)
-        cl.addStretch()
-        root.addWidget(chips_frame)
+            lay.addWidget(chip)
+            self._phrase_chips.append(chip)
 
-    # ── UI-only helpers ───────────────────────
+        lay.addStretch(1)
+        return w
+
+    # ── Internal helpers ───────────────────────────────────────────────────────
+
     def _on_translate_clicked(self):
         text = self.text_input.toPlainText().strip()
         if text:
             self.translate_requested.emit(text)
 
-    def _on_play_clicked(self):
-        # Emit toggle signal — main.py handles pause/resume state
-        self.video_panel.btn_play.setText(
-            "▶" if self.video_panel.btn_play.text() == "⏸" else "⏸"
-        )
-
     def _insert_phrase(self, phrase):
-        cur = self.text_input.toPlainText().strip()
-        self.text_input.setPlainText((cur + " " + phrase).strip())
+        cursor = self.text_input.textCursor()
+        current = self.text_input.toPlainText().strip()
+        if current:
+            cursor.movePosition(cursor.MoveOperation.End)
+            cursor.insertText(" " + phrase)
+        else:
+            cursor.insertText(phrase)
+        self.text_input.setTextCursor(cursor)
+        self.text_input.setFocus()
 
     def _export_menu(self):
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background:#0d0d22; color:#8899cc; border:1px solid #1e1e40;
-                border-radius:6px; padding:4px; }
-            QMenu::item { padding:6px 20px; border-radius:4px; }
-            QMenu::item:selected { background:#1a2a5a; color:#aabbee; }
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {C_SURFACE}; color: {C_INK};
+                border: 1px solid {C_BORDER}; border-radius: 8px; padding: 4px;
+            }}
+            QMenu::item {{ padding: 8px 20px; border-radius: 5px; }}
+            QMenu::item:selected {{ background: {C_TEAL_SOFT}; color: {C_TEAL_DEEP}; }}
         """)
         menu.addAction("Export as MP4")
         menu.addAction("Export as GIF")
         menu.addAction("Export as WebM")
         menu.exec(self.btn_export.mapToGlobal(QPoint(0, self.btn_export.height())))
 
-    # ── Public methods called by main.py ──────
-    def set_status(self, text, color="#1e1e3a", playing=False):
-        self.video_panel.set_status(text, color, playing)
+    def _style_mic_idle(self) -> None:
+        self.btn_mic.setIcon(Icon.mic(20, C_INK))
+        self.btn_mic.setText("  Voice")
+        self.btn_mic.setStyleSheet(f"""
+            QPushButton {{
+                background: {C_SURFACE}; color: {C_INK};
+                border: 1.5px solid {C_BORDER}; border-radius: 14px;
+                padding: 0 14px; text-align: left;
+            }}
+            QPushButton:hover   {{ background: {C_TEAL_SOFT}; border-color: {C_TEAL}; color: {C_TEAL_DEEP}; }}
+            QPushButton:pressed {{ background: {C_MINT}; }}
+            QPushButton:focus   {{ border: 2px solid {C_TEAL}; padding: 0 13px; }}
+        """)
 
-    def set_parsed(self, text):
-        self.parsed_label.setText(text)
+    def _style_mic_recording(self) -> None:
+        self.btn_mic.setIcon(Icon.stop_square(20, "#FFFFFF"))
+        self.btn_mic.setText("  Stop")
+        self.btn_mic.setStyleSheet(f"""
+            QPushButton {{
+                background: {C_CORAL}; color: #FFFFFF;
+                border: 1.5px solid {C_CORAL}; border-radius: 14px;
+                padding: 0 14px; text-align: left;
+            }}
+            QPushButton:hover   {{ background: #D66B4A; border-color: #D66B4A; }}
+            QPushButton:pressed {{ background: #C45F40; }}
+            QPushButton:focus   {{ border: 2px solid {C_TEAL}; padding: 0 13px; }}
+        """)
+
+    def _status_to_pill_state(self, text: str) -> tuple[str, str]:
+        t = text.upper()
+        if any(k in t for k in ("RECORD", "MIC", "🎤")):
+            return "RECORDING", text
+        if "PLAY" in t and "DISPLAY" not in t:
+            return "PLAYING", text
+        if any(k in t for k in ("PARS", "GENERAT", "TRANSCRIB", "WORKING", "PREPARING")):
+            return "WORKING", text
+        if any(k in t for k in ("✓", "DONE", "SAVED", "COMPLETE")):
+            return "DONE", text
+        if any(k in t for k in ("ERROR", "FAILED", "NOT FOUND")):
+            return "ERROR", text
+        return "STANDBY", text
+
+    # ── Public API — signatures match original ui.py exactly ──────────────────
+
+    def set_status(self, text, color="#1e1e3a", playing=False):
+        state, display = self._status_to_pill_state(text)
+        self.status_pill.setState(state, display)
+        self.video_panel.set_status(text, color, playing=playing)
+
+    def set_parsed(self, *_):
+        pass  # tokens display removed per design update
 
     def set_error(self, text):
-        self.info_label.setText(f"⚠ {text}" if text else "")
+        msg = (text or "").strip()
+        if not msg:
+            self.info_label.hide()
+            self.info_label.setText("")
+        else:
+            self.info_label.setText(f"⚠ {msg}")
+            self.info_label.show()
 
     def set_translate_enabled(self, enabled):
-        self.btn_translate.setEnabled(enabled)
+        self.btn_translate.setEnabled(bool(enabled))
 
     def set_replay_enabled(self, enabled):
-        self.btn_replay_tb.setEnabled(enabled)
+        self.video_panel.btn_replay.setEnabled(bool(enabled))
 
     def set_nav_enabled(self, prev, nxt):
-        self.video_panel.btn_prev.setEnabled(prev)
-        self.video_panel.btn_next.setEnabled(nxt)
+        self.video_panel.btn_prev.setEnabled(bool(prev))
+        self.video_panel.btn_next.setEnabled(bool(nxt))
 
     def clear_input(self):
         self.text_input.clear()
 
     def set_input_enabled(self, enabled):
-        self.text_input.setEnabled(enabled)
-        # Dim the text box visually when disabled
-        self.text_input.setStyleSheet("""
-            QTextEdit { background:%s; color:%s;
-                border:1px solid #1a1a3a; border-radius:10px; padding:14px;
-                selection-background-color:#1a3a8a; }
-            QTextEdit:focus { border:1px solid #0050cc; }
-        """ % (('#06060f' if not enabled else '#09091e'),
-               ('#333355' if not enabled else '#c8d8ff')))
+        e = bool(enabled)
+        self.text_input.setEnabled(e)
+        for chip in self._phrase_chips:
+            chip.setEnabled(e)
 
     def set_voice_enabled(self, enabled: bool):
-        self.btn_mic.setEnabled(enabled)
+        self.btn_mic.setEnabled(bool(enabled))
 
     def set_mic_recording(self, recording: bool):
-        """Visual feedback while recording."""
         if recording:
-            self.btn_mic.setText("⏹")
-            self.btn_mic.setStyleSheet("""
-                QPushButton {
-                    background: #3a0000; color: #ff4444;
-                    border: 1px solid #ff4444; border-radius: 10px;
-                }
-                QPushButton:hover { background: #4a0000; }
-            """)
+            self._style_mic_recording()
         else:
-            self.btn_mic.setText("🎤")
-            self.btn_mic.setStyleSheet("""
-                QPushButton {
-                    background: #0d1b2a; color: #00c6ff;
-                    border: 1px solid #1e3a5a; border-radius: 10px;
-                }
-                QPushButton:hover { background: #142840; border-color: #0072ff; }
-                QPushButton:disabled { color: #1e2e3a; border-color: #0d1b2a; }
-            """)
+            self._style_mic_idle()
 
     def insert_text(self, text: str):
-        """Insert transcribed text into input box."""
         self.text_input.setPlainText(text.strip())
 
     def show_frame(self, img):
