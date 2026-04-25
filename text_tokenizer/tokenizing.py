@@ -19,7 +19,7 @@ _pipeline = None
 def _get_pipeline():
     global _pipeline
     if _pipeline is None:
-        print("\u23f3 Loading Armenian NLP model...")
+        # print("\u23f3 Loading Armenian NLP model...")
         t0 = time.perf_counter()
         _pipeline = stanza.Pipeline(
             'hy',
@@ -98,9 +98,26 @@ def parse(text: str, known_words: set = None) -> list:
 if __name__ == '__main__':
     import sys
     tests = [
-        "կաթսա",
-        "տանձ",
-        "բարև ձեզ",
+    "գրքով",
+    "խնձորից",
+    "դասարանում",
+    "ընկերոջը",
+    "ուսանողների",
+    "քաղաքներով",
+    "տանը",
+    "աշխատանքից",
+    "մեքենայով",
+    "երեխաների",
+    "ուսուցչին",
+    "գրասեղանի",
+    "ծրագրում",
+    "համակարգչով",
+    "ճանապարհից",
+    "գործարաններում",
+    "գիտելիքների",
+    "ծառերի",
+    "դպրոցում",
+    "մարդկանց"
     ]
     parse(tests[0])   # warm up
     print()

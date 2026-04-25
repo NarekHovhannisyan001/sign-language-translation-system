@@ -656,12 +656,12 @@ class VideoPanel(QFrame):
         if primary:
             b.setStyleSheet(f"""
                 QPushButton {{
-                    background: {C_INK}; color: #FFFFFF;
-                    border: none; border-radius: {r}px;
+                    background: #FFFFFF; color: {C_INK};
+                    border: 1px solid {C_BORDER}; border-radius: {r}px;
                 }}
-                QPushButton:hover    {{ background: {C_TEAL_DEEP}; }}
-                QPushButton:pressed  {{ background: {C_TEAL}; }}
-                QPushButton:disabled {{ background: {C_BORDER}; color: {C_MUTED}; }}
+                QPushButton:hover    {{ background: {C_TEAL_SOFT}; border-color: {C_TEAL}; }}
+                QPushButton:pressed  {{ background: {C_MINT}; }}
+                QPushButton:disabled {{ background: {C_SAGE}; color: {C_MUTED}; border-color: {C_BORDER}; }}
             """)
         else:
             b.setStyleSheet(f"""
@@ -871,8 +871,7 @@ class MainWindow(QMainWindow):
         self._style_mic_idle()
         self.btn_mic.clicked.connect(self.voice_requested)
 
-        self.btn_translate = QPushButton("Translate to Sign  ")
-        self.btn_translate.setIcon(Icon.translate_arrow(20, "#FFFFFF"))
+        self.btn_translate = QPushButton("Translate to Sign")
         self.btn_translate.setIconSize(QSize(18, 18))
         self.btn_translate.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.btn_translate.setCursor(Qt.CursorShape.PointingHandCursor)
