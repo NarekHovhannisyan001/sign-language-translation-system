@@ -561,12 +561,90 @@ class VideoWorker(QThread):
         self.finished.emit()
 
 
+# ── Fullscreen Viewer ─────────────────────────────────────────────────────────
+
+class FullScreenViewer(QWidget):
+    """Borderless fullscreen window that mirrors the video.
+    Close with the on-screen button or the Esc key."""
+
+    def __init__(self):
+        super().__init__(None, Qt.WindowType.Window)
+        self.setWindowTitle("SLTS — Fullscreen")
+        self.setStyleSheet("background: #0a0a0a;")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Top bar: exit button anchored to the right
+        bar = QWidget()
+        bar.setFixedHeight(54)
+        bar.setStyleSheet("background: transparent;")
+        bar_lay = QHBoxLayout(bar)
+        bar_lay.setContentsMargins(20, 9, 20, 9)
+        bar_lay.addStretch(1)
+
+        btn_exit = QPushButton("✕   Exit Fullscreen")
+        btn_exit.setToolTip("Exit fullscreen  (Esc)")
+        btn_exit.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_exit.setFixedHeight(36)
+        f = QFont()
+        f.setPixelSize(13)
+        btn_exit.setFont(f)
+        btn_exit.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.10);
+                color: #FFFFFF;
+                border: 1px solid rgba(255,255,255,0.18);
+                border-radius: 10px;
+                padding: 0 18px;
+            }
+            QPushButton:hover   { background: rgba(255,255,255,0.22); }
+            QPushButton:pressed { background: rgba(255,255,255,0.06); }
+        """)
+        btn_exit.clicked.connect(self.close)
+        bar_lay.addWidget(btn_exit)
+
+        # Video label — fills remaining space
+        self._label = QLabel()
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._label.setStyleSheet("background: transparent;")
+
+        outer.addWidget(bar)
+        outer.addWidget(self._label, 1)
+
+    def show_frame(self, img) -> None:
+        if isinstance(img, QImage):
+            pix = QPixmap.fromImage(img)
+        elif isinstance(img, QPixmap):
+            pix = img
+        else:
+            return
+        if not pix.isNull():
+            self._label.setPixmap(
+                pix.scaled(
+                    self._label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+
 # ── Video Panel ────────────────────────────────────────────────────────────────
 # Redesigned look; btn_play / loop_check / speed_combo names kept for main.py.
 
 class VideoPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._fs_viewer: FullScreenViewer | None = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setStyleSheet(f"QFrame {{ background: {C_CANVAS}; border: none; }}")
 
@@ -639,6 +717,11 @@ class VideoPanel(QFrame):
             QCheckBox::indicator:hover {{ border-color: {C_TEAL}; }}
         """)
         bl.addWidget(self.loop_check)
+        bl.addSpacing(8)
+
+        self.btn_fs = self._tbtn("⛶", "Toggle fullscreen", 40)
+        self.btn_fs.clicked.connect(self._toggle_fullscreen)
+        bl.addWidget(self.btn_fs)
 
         layout.addWidget(bar)
 
@@ -656,12 +739,12 @@ class VideoPanel(QFrame):
         if primary:
             b.setStyleSheet(f"""
                 QPushButton {{
-                    background: #FFFFFF; color: {C_INK};
-                    border: 1px solid {C_BORDER}; border-radius: {r}px;
+                    background: {C_INK}; color: #FFFFFF;
+                    border: none; border-radius: {r}px;
                 }}
-                QPushButton:hover    {{ background: {C_TEAL_SOFT}; border-color: {C_TEAL}; }}
-                QPushButton:pressed  {{ background: {C_MINT}; }}
-                QPushButton:disabled {{ background: {C_SAGE}; color: {C_MUTED}; border-color: {C_BORDER}; }}
+                QPushButton:hover    {{ background: {C_TEAL_DEEP}; }}
+                QPushButton:pressed  {{ background: {C_TEAL}; }}
+                QPushButton:disabled {{ background: {C_BORDER}; color: {C_MUTED}; }}
             """)
         else:
             b.setStyleSheet(f"""
@@ -675,8 +758,17 @@ class VideoPanel(QFrame):
             """)
         return b
 
-    def show_frame(self, img):
+    def _toggle_fullscreen(self) -> None:
+        if self._fs_viewer is not None and self._fs_viewer.isVisible():
+            self._fs_viewer.close()
+        else:
+            self._fs_viewer = FullScreenViewer()
+            self._fs_viewer.showFullScreen()
+
+    def show_frame(self, img) -> None:
         self._stage.setFrame(img)
+        if self._fs_viewer is not None and self._fs_viewer.isVisible():
+            self._fs_viewer.show_frame(img)
 
     def set_status(self, *_, playing=False):
         self.btn_play.setText("⏸" if playing else "▶")
