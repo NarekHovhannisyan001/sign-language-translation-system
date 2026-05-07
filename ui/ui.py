@@ -612,8 +612,63 @@ class FullScreenViewer(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._label.setStyleSheet("background: transparent;")
 
+        # Bottom controls bar
+        ctrl_bar = QWidget()
+        ctrl_bar.setFixedHeight(72)
+        ctrl_bar.setStyleSheet("background: rgba(0,0,0,0.55);")
+        ctrl_lay = QHBoxLayout(ctrl_bar)
+        ctrl_lay.setContentsMargins(0, 0, 0, 0)
+        ctrl_lay.setSpacing(16)
+        ctrl_lay.addStretch(1)
+
+        self.btn_prev   = self._fsbtn("⏮", "Previous translation",   44)
+        self.btn_play   = self._fsbtn("▶", "Play / Pause",            52, primary=True)
+        self.btn_next   = self._fsbtn("⏭", "Next translation",        44)
+        self.btn_replay = self._fsbtn("↺", "Replay from beginning",   44)
+
+        ctrl_lay.addWidget(self.btn_prev)
+        ctrl_lay.addWidget(self.btn_play)
+        ctrl_lay.addWidget(self.btn_next)
+        ctrl_lay.addSpacing(8)
+        ctrl_lay.addWidget(self.btn_replay)
+        ctrl_lay.addStretch(1)
+
         outer.addWidget(bar)
         outer.addWidget(self._label, 1)
+        outer.addWidget(ctrl_bar)
+
+    @staticmethod
+    def _fsbtn(symbol: str, tooltip: str, size: int = 44, primary: bool = False) -> QPushButton:
+        b = QPushButton(symbol)
+        b.setToolTip(tooltip)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setFixedSize(size, size)
+        b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        f = QFont()
+        f.setPixelSize(size // 3)
+        b.setFont(f)
+        r = size // 2
+        if primary:
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(255,255,255,0.90); color: #0a0a0a;
+                    border: none; border-radius: {r}px;
+                }}
+                QPushButton:hover    {{ background: #FFFFFF; }}
+                QPushButton:pressed  {{ background: rgba(255,255,255,0.70); }}
+                QPushButton:disabled {{ background: rgba(255,255,255,0.25); color: rgba(255,255,255,0.40); }}
+            """)
+        else:
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(255,255,255,0.12); color: #FFFFFF;
+                    border: 1px solid rgba(255,255,255,0.25); border-radius: {r}px;
+                }}
+                QPushButton:hover    {{ background: rgba(255,255,255,0.25); border-color: rgba(255,255,255,0.50); }}
+                QPushButton:pressed  {{ background: rgba(255,255,255,0.08); }}
+                QPushButton:disabled {{ background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.25); border-color: rgba(255,255,255,0.10); }}
+            """)
+        return b
 
     def show_frame(self, img) -> None:
         if isinstance(img, QImage):
@@ -763,6 +818,16 @@ class VideoPanel(QFrame):
             self._fs_viewer.close()
         else:
             self._fs_viewer = FullScreenViewer()
+            # Wire FS buttons → main panel buttons so all AppController signals stay intact
+            self._fs_viewer.btn_prev.clicked.connect(self.btn_prev.click)
+            self._fs_viewer.btn_play.clicked.connect(self.btn_play.click)
+            self._fs_viewer.btn_next.clicked.connect(self.btn_next.click)
+            self._fs_viewer.btn_replay.clicked.connect(self.btn_replay.click)
+            # Sync current enabled / text state into the new viewer
+            self._fs_viewer.btn_prev.setEnabled(self.btn_prev.isEnabled())
+            self._fs_viewer.btn_next.setEnabled(self.btn_next.isEnabled())
+            self._fs_viewer.btn_replay.setEnabled(self.btn_replay.isEnabled())
+            self._fs_viewer.btn_play.setText(self.btn_play.text())
             self._fs_viewer.showFullScreen()
 
     def show_frame(self, img) -> None:
@@ -771,7 +836,10 @@ class VideoPanel(QFrame):
             self._fs_viewer.show_frame(img)
 
     def set_status(self, *_, playing=False):
-        self.btn_play.setText("⏸" if playing else "▶")
+        text = "⏸" if playing else "▶"
+        self.btn_play.setText(text)
+        if self._fs_viewer is not None and self._fs_viewer.isVisible():
+            self._fs_viewer.btn_play.setText(text)
 
 
 # ── Main Window ────────────────────────────────────────────────────────────────
@@ -1135,10 +1203,17 @@ class MainWindow(QMainWindow):
 
     def set_replay_enabled(self, enabled):
         self.video_panel.btn_replay.setEnabled(bool(enabled))
+        fs = self.video_panel._fs_viewer
+        if fs is not None and fs.isVisible():
+            fs.btn_replay.setEnabled(bool(enabled))
 
     def set_nav_enabled(self, prev, nxt):
         self.video_panel.btn_prev.setEnabled(bool(prev))
         self.video_panel.btn_next.setEnabled(bool(nxt))
+        fs = self.video_panel._fs_viewer
+        if fs is not None and fs.isVisible():
+            fs.btn_prev.setEnabled(bool(prev))
+            fs.btn_next.setEnabled(bool(nxt))
 
     def clear_input(self):
         self.text_input.clear()
